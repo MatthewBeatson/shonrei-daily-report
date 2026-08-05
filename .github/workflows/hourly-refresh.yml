@@ -1,0 +1,28 @@
+name: Hourly refresh trigger
+
+# Fires every hour, every day (UTC cron below, GitHub Actions doesn't
+# support timezones). It's cheap to over-fire: refresh-service's own
+# within_scheduled_window check (see refresh-service/app.py) decides
+# whether "now" in Pacific/Auckland is actually inside the configured
+# business-hours window before doing any real Xero/Cin7 work, so this
+# schedule never needs adjusting for NZ daylight saving.
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch: {} # lets you fire it manually from the Actions tab too
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /refresh
+        run: |
+          curl -sS -X POST "${REFRESH_SERVICE_URL}/refresh" \
+            -H "X-Refresh-Secret: ${REFRESH_SHARED_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            -w "\nHTTP %{http_code}\n" \
+            --fail-with-body
+        env:
+          REFRESH_SERVICE_URL: ${{ secrets.REFRESH_SERVICE_URL }}
+          REFRESH_SHARED_SECRET: ${{ secrets.REFRESH_SHARED_SECRET }}

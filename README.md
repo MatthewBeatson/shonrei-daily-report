@@ -20,7 +20,8 @@ scripts/               One-off provisioning/maintenance scripts (Python)
 refresh-service/       Always-on Python service that pulls Xero + Cin7 and writes snapshots
 backend/                Node/Express API + serves the frontend as static files
 frontend/               Plain HTML/CSS/JS, no build step, no framework
-render.yaml             3 Render services: web, refresh-service, and an hourly cron trigger
+render.yaml             2 Render services: web, refresh-service
+.github/workflows/      Hourly GitHub Actions trigger for the refresh service (Render has no free Cron Job plan)
 ```
 
 ## Architecture in one paragraph
@@ -30,7 +31,7 @@ pulling logic (same P&L row-matching fallback, same Cin7 sale-detail
 caching) with the Excel-writing and Outlook-emailing replaced by Supabase
 writes -- one new row in `reporting.report_snapshots` per refresh, plus
 `reporting.refresh_log` entries. It exposes one endpoint, `POST /refresh`,
-called both by an hourly Render Cron Job and by the Node backend's
+called both by an hourly GitHub Actions workflow and by the Node backend's
 `POST /reporting/refresh` (the web app's "Refresh Now" button). `backend`
 is a small Express API that verifies each user's Supabase session, checks
 they're in `reporting.report_users`, and reads/writes the `reporting`
@@ -60,11 +61,10 @@ pip install -r requirements.txt
 python app.py   # http://localhost:8000 -- needs XERO_*/CIN7_*/REFRESH_SHARED_SECRET env vars too
 ```
 
-## Deploying (Render)
+## Deploying (Render + GitHub Actions)
 
 1. **New -> Blueprint**, connect this repo. Render reads `render.yaml` and
-   creates three services: `shonrei-report-web`, `shonrei-report-refresh`,
-   `shonrei-report-cron`.
+   creates two services: `shonrei-report-web`, `shonrei-report-refresh`.
 2. On **shonrei-report-refresh**: set the Supabase pooler env vars (same
    values as this repo's `.env`) plus the Xero/Cin7 secrets. Get those
    secrets by running `python scripts/print_local_credentials.py` **on
@@ -77,17 +77,24 @@ python app.py   # http://localhost:8000 -- needs XERO_*/CIN7_*/REFRESH_SHARED_SE
 4. On **shonrei-report-web**: set the Supabase pooler env vars +
    `SUPABASE_URL`/`SUPABASE_ANON_KEY`, `REFRESH_SERVICE_URL` (the URL from
    step 3), and the **same** `REFRESH_SHARED_SECRET` as step 2.
-5. On **shonrei-report-cron**: set `REFRESH_SERVICE_URL` (same as step 3)
-   and the same `REFRESH_SHARED_SECRET`.
-6. Deploy all three. Visit the web service's URL -- that's the one to
-   bookmark / add to the home screen on Android.
+5. Deploy it. Visit its URL -- that's the one to bookmark / add to the
+   home screen on Android.
+6. On GitHub: repo **Settings -> Secrets and variables -> Actions**, add
+   two repo secrets -- `REFRESH_SERVICE_URL` (from step 3) and
+   `REFRESH_SHARED_SECRET` (same value as step 2). That's what powers
+   `.github/workflows/hourly-refresh.yml`, which fires every hour.
 
-The cron fires every hour, but the refresh service itself only does real
-work inside the business-hours window in `reporting.settings`
+Render has no free plan for Cron Job services, so the hourly trigger is a
+GitHub Actions workflow instead (completely free for something this
+infrequent) rather than a third Render service. It fires every hour
+year-round, but the refresh service itself only does real work inside the
+business-hours window in `reporting.settings`
 (`refresh_window_start_hour`/`refresh_window_end_hour`, default 7-19,
 timezone `Pacific/Auckland`) -- computed at call time, so it tracks NZ
-daylight saving without the cron schedule needing adjustment. On-demand
-refreshes (the web app's button) always run regardless of the window.
+daylight saving without the workflow's schedule needing adjustment.
+On-demand refreshes (the web app's button) always run regardless of the
+window. You can also fire the workflow manually anytime from the repo's
+**Actions** tab ("Run workflow").
 
 ## The 6 users
 

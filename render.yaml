@@ -75,21 +75,11 @@ services:
       - key: REFRESH_SHARED_SECRET
         sync: false
 
-  # Fires hourly; the refresh-service itself decides whether "now" is
-  # actually inside the configured business-hours window (see
-  # within_scheduled_window in refresh-service/app.py) before doing any
-  # real work, so this schedule doesn't need adjusting for NZ daylight
-  # saving.
-  - type: cron
-    name: shonrei-report-cron
-    runtime: python
-    rootDir: refresh-service
-    plan: free
-    schedule: "0 * * * *"
-    buildCommand: pip install -r requirements.txt
-    startCommand: python trigger_refresh.py
-    envVars:
-      - key: REFRESH_SERVICE_URL
-        sync: false
-      - key: REFRESH_SHARED_SECRET
-        sync: false
+# The hourly scheduled trigger is a GitHub Actions workflow instead of a
+# third Render service -- Render has no free plan for Cron Job services,
+# and a workflow that just does one HTTP POST doesn't need one. See
+# .github/workflows/hourly-refresh.yml. The refresh-service itself decides
+# whether "now" is actually inside the configured business-hours window
+# (within_scheduled_window in refresh-service/app.py) before doing any
+# real work, so the workflow's schedule doesn't need adjusting for NZ
+# daylight saving.
