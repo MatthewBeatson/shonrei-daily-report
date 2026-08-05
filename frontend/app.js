@@ -61,15 +61,25 @@
   };
 
   // ---------------------------------------------------------------
-  // "Remember me on this device" vault -- localStorage, opt-in only.
-  // Distinct from `session` above: this is what survives a closed
-  // browser. On boot, if enabled and still valid, its tokens seed
-  // `session` and the app resumes straight into the PIN lock screen
-  // instead of the full login form.
+  // "Use PIN instead" vault -- localStorage. Distinct from `session`
+  // above: this is what survives a closed browser. Deliberately NOT
+  // auto-resumed on page load (that silently died on any transient
+  // network hiccup, which is what made it feel unreliable) -- instead
+  // the login screen shows a "Use PIN instead" link when this device has
+  // something remembered, and the user explicitly taps it. On failure it
+  // just shows an error and leaves the password field usable, rather
+  // than silently disabling the feature forever over what might have
+  // been a one-off blip.
+  //
+  // On by default after any successful login (no separate opt-in
+  // checkbox) unless the user has explicitly turned it off for this
+  // device via the dashboard toggle -- isNeverSet() distinguishes "never
+  // touched" (default on) from an explicit past "off" (stays off).
   // ---------------------------------------------------------------
   const REMEMBER_KEY = 'remember_device_enabled';
   const remember = {
     isEnabled() { return localStorage.getItem(REMEMBER_KEY) === 'true'; },
+    isNeverSet() { return localStorage.getItem(REMEMBER_KEY) === null; },
     save(tokens) {
       localStorage.setItem('r_access_token', tokens.access_token);
       localStorage.setItem('r_refresh_token', tokens.refresh_token);
@@ -179,6 +189,7 @@
     remember.disable(); // "sign out" means require real credentials next time, same as any app
     state.reportUser = null;
     $('login-error').textContent = message || '';
+    updateUsePinLinkVisibility();
     showView('login');
     stopIdleWatch();
   }
@@ -450,11 +461,10 @@
     btn.disabled = true;
     try {
       await supabaseSignIn($('login-email').value.trim(), $('login-password').value);
-      if ($('remember-device').checked) {
-        remember.enable();
-      } else {
-        remember.disable(); // covers switching it back off on this device
-      }
+      // On by default (first time this device has ever seen this
+      // setting); an explicit past "off" from the dashboard toggle is
+      // respected and left alone rather than silently re-enabled.
+      if (remember.isNeverSet() || remember.isEnabled()) remember.enable();
       await afterSignIn();
     } catch (e) {
       $('login-error').textContent = e.message;
@@ -463,9 +473,41 @@
     }
   });
 
-  // startLocked: true when resuming a "remembered" session on boot -- the
-  // dashboard loads underneath, but the PIN lock shows immediately on top
-  // of it, so nothing is visible until the PIN is entered.
+  // "Use PIN instead" on the login screen -- explicit, one-shot attempt
+  // to resume this device's remembered session. Unlike the old
+  // auto-resume-on-boot approach, a failure here (network blip, Render
+  // cold start, genuinely expired session) just shows an error and
+  // leaves the password field sitting right there ready to use --
+  // it does NOT silently disable the feature, so a one-off hiccup
+  // doesn't quietly break it for next time.
+  $('use-pin-link').addEventListener('click', async () => {
+    const link = $('use-pin-link');
+    const vault = remember.load();
+    if (!vault?.refresh_token) {
+      $('login-error').textContent = 'No remembered device found here -- sign in with your password.';
+      link.classList.add('hidden');
+      return;
+    }
+    $('login-error').textContent = '';
+    link.disabled = true;
+    link.textContent = 'Checking…';
+    try {
+      session.set({ access_token: vault.access_token, refresh_token: vault.refresh_token, expires_in: 0 });
+      await ensureFreshToken();
+      await afterSignIn({ startLocked: true });
+    } catch (e) {
+      $('login-error').textContent = "Couldn't verify this device -- sign in with your password instead.";
+      session.clear();
+    } finally {
+      link.disabled = false;
+      link.textContent = 'Use PIN instead';
+    }
+  });
+
+  // startLocked: true when resuming a remembered session via "Use PIN
+  // instead" -- the dashboard loads underneath, but the PIN lock shows
+  // immediately on top of it, so nothing is visible until the PIN is
+  // entered.
   async function afterSignIn({ startLocked = false } = {}) {
     const me = await api('/auth/me');
     state.reportUser = me;
@@ -483,6 +525,9 @@
 
   function updateRememberButton() {
     $('remember-toggle-btn').textContent = `PIN sign-in: ${remember.isEnabled() ? 'On' : 'Off'}`;
+  }
+  function updateUsePinLinkVisibility() {
+    $('use-pin-link').classList.toggle('hidden', !remember.isEnabled());
   }
   $('remember-toggle-btn').addEventListener('click', () => {
     if (remember.isEnabled()) {
@@ -654,33 +699,14 @@
   $('sign-out-btn').addEventListener('click', () => fullSignOut());
 
   // ---------------------------------------------------------------
-  // Boot: recovery link > remembered device (localStorage) > this tab's
-  // own sessionStorage session > full login.
+  // Boot: recovery link > this tab's own sessionStorage session (e.g. a
+  // plain page refresh mid-session) > login screen, with "Use PIN
+  // instead" shown there if this device has something remembered.
+  // Deliberately no automatic vault resume here -- see the "Use PIN
+  // instead" handler above for why.
   // ---------------------------------------------------------------
   (async function boot() {
     if (checkForRecoveryLink()) return;
-
-    if (remember.isEnabled()) {
-      const vault = remember.load();
-      if (vault?.refresh_token) {
-        // Seed this tab's session from the vault and force an immediate
-        // refresh (expires_in: 0) rather than trusting the vault's saved
-        // expiry -- simplest way to find out in one step whether it's
-        // actually still good.
-        session.set({ access_token: vault.access_token, refresh_token: vault.refresh_token, expires_in: 0 });
-        try {
-          await ensureFreshToken();
-          await afterSignIn({ startLocked: true });
-          return;
-        } catch (e) {
-          // Vault's session is genuinely dead (revoked/expired) -- fully
-          // turn the feature off on this device rather than leaving a
-          // stale vault that fails the same way every time it's opened.
-          remember.disable();
-          session.clear();
-        }
-      }
-    }
 
     if (session.access_token) {
       try {
@@ -690,6 +716,7 @@
         session.clear();
       }
     }
+    updateUsePinLinkVisibility();
     showView('login');
   })();
 })();
