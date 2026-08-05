@@ -1,0 +1,179 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Shonrei Daily Management Summary</title>
+<link rel="stylesheet" href="/styles.css" />
+<meta name="theme-color" content="#17365D" />
+
+<div class="app" id="app">
+
+  <!-- ===================== LOGIN ===================== -->
+  <div class="center-screen" id="view-login">
+    <form class="card" id="login-form" autocomplete="on">
+      <h1>Shonrei Daily Management Summary</h1>
+      <p class="sub">Sign in to view today's figures.</p>
+      <label for="login-email">Email</label>
+      <input type="email" id="login-email" name="email" autocomplete="username" required />
+      <label for="login-password">Password</label>
+      <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      <button type="submit" class="btn-primary" id="login-submit">Sign in</button>
+      <button type="button" class="btn-link" id="forgot-password-link" style="padding-top:14px;">Forgot password?</button>
+      <div class="error-text" id="login-error"></div>
+    </form>
+  </div>
+
+  <!-- ===================== FORGOT PASSWORD ===================== -->
+  <div class="center-screen hidden" id="view-forgot">
+    <div class="card">
+      <h1>Reset your password</h1>
+      <p class="sub">Enter your email and we'll send you a link to set a new password.</p>
+      <label for="forgot-email">Email</label>
+      <input type="email" id="forgot-email" autocomplete="username" />
+      <button class="btn-primary" id="forgot-submit">Send reset link</button>
+      <button type="button" class="btn-link" id="forgot-back">Back to sign in</button>
+      <div class="error-text" id="forgot-error"></div>
+      <div class="sub" id="forgot-success" style="color: var(--green); display:none; margin-top:10px;">
+        Check your email for a reset link.
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== SET NEW PASSWORD (from email link) ===================== -->
+  <div class="center-screen hidden" id="view-set-password">
+    <div class="card">
+      <h1>Set a new password</h1>
+      <p class="sub">Choose a new password for your account.</p>
+      <label for="set-password-1">New password</label>
+      <input type="password" id="set-password-1" autocomplete="new-password" />
+      <label for="set-password-2">Confirm password</label>
+      <input type="password" id="set-password-2" autocomplete="new-password" />
+      <button class="btn-primary" id="set-password-submit">Save password</button>
+      <div class="error-text" id="set-password-error"></div>
+    </div>
+  </div>
+
+  <!-- ===================== PIN SETUP (first login) ===================== -->
+  <div class="center-screen hidden" id="view-pin-setup">
+    <div class="card">
+      <h1>Choose a 4-digit PIN</h1>
+      <p class="sub">The app locks after 2 minutes of inactivity. Use this PIN to unlock it quickly instead of signing in again.</p>
+      <label>PIN</label>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="pin-setup-1" placeholder="****" />
+      <label>Confirm PIN</label>
+      <input type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" id="pin-setup-2" placeholder="****" />
+      <button class="btn-primary" id="pin-setup-submit">Save PIN</button>
+      <div class="error-text" id="pin-setup-error"></div>
+    </div>
+  </div>
+
+  <!-- ===================== DASHBOARD ===================== -->
+  <div class="hidden" id="view-dashboard" style="display:flex; flex-direction:column; min-height:100vh;">
+    <div class="topbar">
+      <div>
+        <h1>SHONREI DAILY MANAGEMENT SUMMARY</h1>
+        <div class="as-of" id="as-of-text">As at —</div>
+      </div>
+      <div class="right">
+        <span class="status-badge ok" id="overall-status-badge">—</span>
+        <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+        <button class="btn-link" id="lock-now-btn" style="color:#fff; opacity:0.8;" title="Lock now">🔒</button>
+        <button class="btn-link" id="sign-out-btn" style="color:#fff; opacity:0.8;">Sign out</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="error-text" id="dashboard-error"></div>
+
+      <!-- CASH POSITION -->
+      <div class="report-section">
+        <div class="section-header">CASH POSITION</div>
+        <div id="row-bank"></div>
+        <div id="row-net-short-term"></div>
+      </div>
+
+      <!-- SALES -->
+      <div class="report-section">
+        <div class="section-header">SALES</div>
+        <div id="row-sales-mtd"></div>
+        <div id="row-sales-prev"></div>
+        <div id="row-projected"></div>
+        <div id="row-breakeven"></div>
+        <div id="row-variance"></div>
+        <div id="row-sales-on-hand"></div>
+        <div id="row-remaining"></div>
+      </div>
+
+      <!-- WORKING CAPITAL -->
+      <div class="report-section">
+        <div class="section-header">WORKING CAPITAL</div>
+        <div id="row-debtors-total"></div>
+        <div id="row-debtors-not-due"></div>
+        <div id="row-debtors-overdue"></div>
+        <div id="row-creditors-total"></div>
+        <div id="row-creditors-nzd"></div>
+        <div id="row-wc"></div>
+        <div id="row-wc-ratio"></div>
+      </div>
+
+      <div class="report-section" id="commentary-section">
+        <div class="section-header">MANAGEMENT COMMENTARY</div>
+        <div class="metric-row">
+          <div class="metric-label" id="commentary-text" style="white-space:pre-wrap;">—</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        <span><span class="dot" style="background:var(--green)"></span> Imported data</span>
+        <span><span class="dot" style="background:var(--blue)"></span> Management input</span>
+        <span><span class="dot" style="background:var(--gray)"></span> Calculated</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== EDIT MANUAL INPUTS MODAL ===================== -->
+  <div class="modal-backdrop hidden" id="edit-modal-backdrop">
+    <div class="modal">
+      <h2>Edit management inputs</h2>
+      <p class="sub" style="margin:0 0 6px; font-size:0.8rem; color:var(--gray);">Visible to everyone; only you and a couple of others can change these.</p>
+      <label for="edit-projected">Projected sales — current month</label>
+      <input type="text" inputmode="decimal" id="edit-projected" />
+      <label for="edit-breakeven">Monthly breakeven</label>
+      <input type="text" inputmode="decimal" id="edit-breakeven" />
+      <label for="edit-commentary">Management commentary</label>
+      <textarea id="edit-commentary" rows="4" style="width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:8px; font-family:inherit; font-size:0.95rem; background:var(--bg); color:var(--text);"></textarea>
+      <div class="error-text" id="edit-error"></div>
+      <div class="actions">
+        <button class="btn-secondary" id="edit-cancel">Cancel</button>
+        <button class="btn-primary modal-save" id="edit-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== LOCK OVERLAY ===================== -->
+  <div class="lock-overlay hidden" id="view-locked">
+    <h1>Locked</h1>
+    <p class="sub" id="lock-user-text">Enter your PIN to continue</p>
+    <div class="pin-dots" id="lock-pin-dots">
+      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+    </div>
+    <div class="error-text" id="lock-error"></div>
+    <div class="pin-keypad" id="lock-keypad">
+      <button class="pin-key" data-key="1">1</button>
+      <button class="pin-key" data-key="2">2</button>
+      <button class="pin-key" data-key="3">3</button>
+      <button class="pin-key" data-key="4">4</button>
+      <button class="pin-key" data-key="5">5</button>
+      <button class="pin-key" data-key="6">6</button>
+      <button class="pin-key" data-key="7">7</button>
+      <button class="pin-key" data-key="8">8</button>
+      <button class="pin-key" data-key="9">9</button>
+      <div class="pin-key empty"></div>
+      <button class="pin-key" data-key="0">0</button>
+      <button class="pin-key" data-key="back">⌫</button>
+    </div>
+    <button class="btn-link" id="lock-use-password" style="margin-top:20px;">Sign in with password instead</button>
+  </div>
+
+</div>
+
+<script src="/config.js"></script>
+<script src="/app.js"></script>

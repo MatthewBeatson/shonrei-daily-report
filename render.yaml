@@ -1,0 +1,95 @@
+services:
+  # Node/Express API + serves the static frontend (single origin, no CORS
+  # needed between them). This is the only service the 6 users' browsers
+  # ever talk to.
+  - type: web
+    name: shonrei-report-web
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_DB_HOST
+        sync: false
+      - key: SUPABASE_DB_PORT
+        sync: false
+      - key: SUPABASE_DB_NAME
+        sync: false
+      - key: SUPABASE_DB_USER
+        sync: false
+      - key: SUPABASE_DB_PASSWORD
+        sync: false
+      # URL of the shonrei-report-refresh service below, and the secret
+      # both services share -- must match its REFRESH_SHARED_SECRET exactly.
+      - key: REFRESH_SERVICE_URL
+        sync: false
+      - key: REFRESH_SHARED_SECRET
+        sync: false
+
+  # Always-on Python service that does the actual Xero/Cin7 pulls. Never
+  # exposed to end users -- only shonrei-report-web (on-demand clicks) and
+  # shonrei-report-cron (scheduled) call its POST /refresh, both using the
+  # shared secret. Single worker: refresh_state in the DB is used as a
+  # lock to stop overlapping runs, which only holds if one process at a
+  # time can flip it.
+  - type: web
+    name: shonrei-report-refresh
+    runtime: python
+    rootDir: refresh-service
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_DB_HOST
+        sync: false
+      - key: SUPABASE_DB_PORT
+        sync: false
+      - key: SUPABASE_DB_NAME
+        sync: false
+      - key: SUPABASE_DB_USER
+        sync: false
+      - key: SUPABASE_DB_PASSWORD
+        sync: false
+      # Xero -- client id/secret are static (from your Xero app
+      # registration); INITIAL_REFRESH_TOKEN seeds reporting.settings on
+      # first run only, after which the service maintains its own
+      # rotating value there (Xero rotates the refresh token on every use).
+      - key: XERO_CLIENT_ID
+        sync: false
+      - key: XERO_CLIENT_SECRET
+        sync: false
+      - key: XERO_INITIAL_REFRESH_TOKEN
+        sync: false
+      # Cin7 Core
+      - key: CIN7_ACCOUNT_ID
+        sync: false
+      - key: CIN7_API_KEY
+        sync: false
+      - key: REFRESH_SHARED_SECRET
+        sync: false
+
+  # Fires hourly; the refresh-service itself decides whether "now" is
+  # actually inside the configured business-hours window (see
+  # within_scheduled_window in refresh-service/app.py) before doing any
+  # real work, so this schedule doesn't need adjusting for NZ daylight
+  # saving.
+  - type: cron
+    name: shonrei-report-cron
+    runtime: python
+    rootDir: refresh-service
+    plan: free
+    schedule: "0 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python trigger_refresh.py
+    envVars:
+      - key: REFRESH_SERVICE_URL
+        sync: false
+      - key: REFRESH_SHARED_SECRET
+        sync: false
