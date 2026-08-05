@@ -16,6 +16,11 @@
       <input type="email" id="login-email" name="email" autocomplete="username" required />
       <label for="login-password">Password</label>
       <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+      <label class="checkbox-row">
+        <input type="checkbox" id="remember-device" />
+        <span>Remember me on this device &mdash; unlock with PIN next time</span>
+      </label>
+      <p class="sub" style="margin:2px 0 0; font-size:0.75rem;">Only enable this on your own device. It skips your password next time &mdash; a 4-digit PIN unlocks it instead.</p>
       <button type="submit" class="btn-primary" id="login-submit">Sign in</button>
       <button type="button" class="btn-link" id="forgot-password-link" style="padding-top:14px;">Forgot password?</button>
       <div class="error-text" id="login-error"></div>
@@ -76,6 +81,7 @@
       <div class="right">
         <span class="status-badge ok" id="overall-status-badge">—</span>
         <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+        <button class="btn-link" id="remember-toggle-btn" style="color:#fff; opacity:0.8;">PIN sign-in: Off</button>
         <button class="btn-link" id="lock-now-btn" style="color:#fff; opacity:0.8;" title="Lock now">🔒</button>
         <button class="btn-link" id="sign-out-btn" style="color:#fff; opacity:0.8;">Sign out</button>
       </div>
@@ -117,9 +123,7 @@
 
       <div class="report-section" id="commentary-section">
         <div class="section-header">MANAGEMENT COMMENTARY</div>
-        <div class="metric-row">
-          <div class="metric-label" id="commentary-text" style="white-space:pre-wrap;">—</div>
-        </div>
+        <div id="row-commentary"></div>
       </div>
 
       <div class="legend">

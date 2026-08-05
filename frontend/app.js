@@ -7,8 +7,12 @@
 // what it's given and gets out of the way.
 //
 // Session tokens live in sessionStorage (cleared when the tab/browser
-// closes) rather than localStorage -- deliberate, given this shows
-// financial figures on shared/mobile devices.
+// closes) by default -- deliberate, given this shows financial figures on
+// shared/mobile devices. A user can opt in to "Remember me on this device"
+// (see the `remember` vault below), which mirrors the session into
+// localStorage instead so it survives closing the browser; on the next
+// visit that resumes straight into the PIN lock screen rather than full
+// login. It's strictly opt-in and per-device, reversible with one tap.
 
 (() => {
   const CONFIG = window.__CONFIG__ || {};
@@ -43,11 +47,62 @@
       sessionStorage.setItem('access_token', tokens.access_token);
       sessionStorage.setItem('refresh_token', tokens.refresh_token);
       sessionStorage.setItem('expires_at', String(Date.now() + (tokens.expires_in || 3600) * 1000));
+      // Keep the persisted "remember me" copy in sync too, if enabled --
+      // Supabase rotates the refresh token on every use, so without this
+      // the vault's copy would go stale after the first refresh and
+      // silently stop working a session later.
+      if (remember.isEnabled()) remember.save(tokens);
     },
     clear() {
       sessionStorage.removeItem('access_token');
       sessionStorage.removeItem('refresh_token');
       sessionStorage.removeItem('expires_at');
+    },
+  };
+
+  // ---------------------------------------------------------------
+  // "Remember me on this device" vault -- localStorage, opt-in only.
+  // Distinct from `session` above: this is what survives a closed
+  // browser. On boot, if enabled and still valid, its tokens seed
+  // `session` and the app resumes straight into the PIN lock screen
+  // instead of the full login form.
+  // ---------------------------------------------------------------
+  const REMEMBER_KEY = 'remember_device_enabled';
+  const remember = {
+    isEnabled() { return localStorage.getItem(REMEMBER_KEY) === 'true'; },
+    save(tokens) {
+      localStorage.setItem('r_access_token', tokens.access_token);
+      localStorage.setItem('r_refresh_token', tokens.refresh_token);
+      localStorage.setItem('r_expires_at', String(Date.now() + (tokens.expires_in || 3600) * 1000));
+    },
+    load() {
+      const refresh_token = localStorage.getItem('r_refresh_token');
+      if (!refresh_token) return null;
+      return {
+        access_token: localStorage.getItem('r_access_token'),
+        refresh_token,
+        expires_at: Number(localStorage.getItem('r_expires_at') || 0),
+      };
+    },
+    clearVault() {
+      localStorage.removeItem('r_access_token');
+      localStorage.removeItem('r_refresh_token');
+      localStorage.removeItem('r_expires_at');
+    },
+    enable() {
+      localStorage.setItem(REMEMBER_KEY, 'true');
+      // Seed the vault immediately from the session that's active right now.
+      if (session.refresh_token) {
+        remember.save({
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          expires_in: Math.max(0, Math.round((session.expires_at - Date.now()) / 1000)),
+        });
+      }
+    },
+    disable() {
+      localStorage.setItem(REMEMBER_KEY, 'false');
+      remember.clearVault();
     },
   };
 
@@ -121,6 +176,7 @@
 
   function fullSignOut(message) {
     session.clear();
+    remember.disable(); // "sign out" means require real credentials next time, same as any app
     state.reportUser = null;
     $('login-error').textContent = message || '';
     showView('login');
@@ -289,12 +345,16 @@
       valueClass: 'calculated', source: '(Cash + debtors) ÷ creditors', status: 'calculated',
     });
 
-    $('commentary-text').textContent = manual_inputs?.commentary || 'No commentary yet.';
-    if (state.reportUser?.can_edit) {
-      $('commentary-section').querySelector('.metric-row').insertAdjacentHTML(
-        'beforeend', `<button class="edit-inline-btn" data-open-edit="1" style="margin-left:auto;">Edit</button>`
-      );
-    }
+    // Rebuilt fully each render (not appended-to) so repeated renders --
+    // on load, after refresh polling, after a save -- never stack up
+    // duplicate Edit buttons.
+    const commentaryText = (manual_inputs?.commentary || 'No commentary yet.')
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    $('row-commentary').innerHTML = `
+      <div class="metric-row">
+        <div class="metric-label" style="white-space:pre-wrap; flex:1;">${commentaryText}</div>
+        ${state.reportUser?.can_edit ? '<button class="edit-inline-btn" data-open-edit="1">Edit</button>' : ''}
+      </div>`;
 
     document.querySelectorAll('[data-open-edit]').forEach((btn) => btn.addEventListener('click', openEditModal));
     updateRefreshButton(refresh_state);
@@ -390,6 +450,11 @@
     btn.disabled = true;
     try {
       await supabaseSignIn($('login-email').value.trim(), $('login-password').value);
+      if ($('remember-device').checked) {
+        remember.enable();
+      } else {
+        remember.disable(); // covers switching it back off on this device
+      }
       await afterSignIn();
     } catch (e) {
       $('login-error').textContent = e.message;
@@ -398,18 +463,35 @@
     }
   });
 
-  async function afterSignIn() {
+  // startLocked: true when resuming a "remembered" session on boot -- the
+  // dashboard loads underneath, but the PIN lock shows immediately on top
+  // of it, so nothing is visible until the PIN is entered.
+  async function afterSignIn({ startLocked = false } = {}) {
     const me = await api('/auth/me');
     state.reportUser = me;
     if (!me.pin_set) {
       showView('pinSetup');
     } else {
       showView('dashboard');
+      updateRememberButton();
       resetIdleTimer();
       startIdleWatch();
       loadDashboard();
+      if (startLocked) lockScreen();
     }
   }
+
+  function updateRememberButton() {
+    $('remember-toggle-btn').textContent = `PIN sign-in: ${remember.isEnabled() ? 'On' : 'Off'}`;
+  }
+  $('remember-toggle-btn').addEventListener('click', () => {
+    if (remember.isEnabled()) {
+      remember.disable();
+    } else {
+      remember.enable();
+    }
+    updateRememberButton();
+  });
 
   // ---------------------------------------------------------------
   // Forgot password / set new password (from emailed recovery link)
@@ -484,6 +566,7 @@
       await api('/auth/pin/set', { method: 'POST', body: JSON.stringify({ pin: p1 }) });
       state.reportUser.pin_set = true;
       showView('dashboard');
+      updateRememberButton();
       resetIdleTimer();
       startIdleWatch();
       loadDashboard();
@@ -571,10 +654,34 @@
   $('sign-out-btn').addEventListener('click', () => fullSignOut());
 
   // ---------------------------------------------------------------
-  // Boot: try to resume an existing sessionStorage session
+  // Boot: recovery link > remembered device (localStorage) > this tab's
+  // own sessionStorage session > full login.
   // ---------------------------------------------------------------
   (async function boot() {
     if (checkForRecoveryLink()) return;
+
+    if (remember.isEnabled()) {
+      const vault = remember.load();
+      if (vault?.refresh_token) {
+        // Seed this tab's session from the vault and force an immediate
+        // refresh (expires_in: 0) rather than trusting the vault's saved
+        // expiry -- simplest way to find out in one step whether it's
+        // actually still good.
+        session.set({ access_token: vault.access_token, refresh_token: vault.refresh_token, expires_in: 0 });
+        try {
+          await ensureFreshToken();
+          await afterSignIn({ startLocked: true });
+          return;
+        } catch (e) {
+          // Vault's session is genuinely dead (revoked/expired) -- fully
+          // turn the feature off on this device rather than leaving a
+          // stale vault that fails the same way every time it's opened.
+          remember.disable();
+          session.clear();
+        }
+      }
+    }
+
     if (session.access_token) {
       try {
         await afterSignIn();

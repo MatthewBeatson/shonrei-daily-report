@@ -48,6 +48,22 @@ body {
 
 .app { min-height: 100vh; display: flex; flex-direction: column; }
 
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.checkbox-row input[type="checkbox"] {
+  width: 16px; height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: var(--navy);
+}
+
 /* ---------- Shared / layout ---------- */
 .center-screen {
   flex: 1;
@@ -122,12 +138,12 @@ button {
 .pin-keypad {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  max-width: 260px;
+  gap: 16px;
+  width: min(90%, 340px);
   margin: 0 auto;
 }
 .pin-key {
-  padding: 16px 0;
+  padding: 20px 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--card-bg);
