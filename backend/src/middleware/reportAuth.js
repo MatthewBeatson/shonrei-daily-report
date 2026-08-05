@@ -17,6 +17,12 @@ async function requireReportAuth(req, res, next) {
 
     const { data, error } = await supabaseAuth.auth.getUser(token);
     if (error || !data?.user) {
+      // Logged server-side only -- the response to the client stays a
+      // generic 401 so we don't leak details about *why* a token failed,
+      // but this is what actually lets us diagnose a bad deploy config
+      // (wrong SUPABASE_URL/ANON_KEY, egress issues, etc.) vs a genuinely
+      // expired session from the Render logs.
+      console.error('requireReportAuth: supabase getUser failed:', error?.message || error, 'status:', error?.status);
       throw new ApiError(401, 'Invalid or expired token');
     }
 
