@@ -47,6 +47,12 @@ services:
     startCommand: gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app
     healthCheckPath: /health
     envVars:
+      # Render defaults to the newest Python (3.14 as of this writing),
+      # whose C ABI is too new for psycopg2-binary's compiled extension
+      # ("undefined symbol: _PyInterpreterState_Get" at import time). Pin
+      # to a well-supported version instead of chasing wheel compatibility.
+      - key: PYTHON_VERSION
+        value: 3.12.6
       - key: SUPABASE_DB_HOST
         sync: false
       - key: SUPABASE_DB_PORT
