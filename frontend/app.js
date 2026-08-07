@@ -247,6 +247,16 @@
     const d = new Date(iso);
     return d.toLocaleString('en-NZ', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
   }
+  // Plain date (no time) -- used to name the previous-workday row after
+  // the actual day, e.g. "Friday, 7 Aug" rather than a generic label.
+  function fmtDayLabel(dateStr) {
+    if (!dateStr) return null;
+    // dateStr is a plain 'YYYY-MM-DD' from Postgres -- parse as local, not UTC,
+    // so it doesn't shift a day depending on the viewer's timezone.
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    return date.toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'short' });
+  }
 
   function statusBadge(status) {
     const map = { ok: 'OK', error: 'Error', manual: 'Manual', calculated: 'Calculated', partial: 'Partial' };
@@ -299,6 +309,11 @@
     // ---- Sales ----
     $('row-sales-mtd').innerHTML = renderRow({
       label: 'Sales invoiced — month to date', value: fmtMoney(snapshot?.sales_mtd), valueClass: 'imported',
+      source: 'Xero P&L', refreshedAt: fmtTime(snapshot?.as_of), status: snapshot?.sales_status,
+    });
+    $('row-sales-workday').innerHTML = renderRow({
+      label: `Sales invoiced — ${fmtDayLabel(snapshot?.sales_previous_workday_date) || 'previous working day'}`,
+      value: fmtMoney(snapshot?.sales_previous_workday), valueClass: 'imported',
       source: 'Xero P&L', refreshedAt: fmtTime(snapshot?.as_of), status: snapshot?.sales_status,
     });
     $('row-sales-prev').innerHTML = renderRow({

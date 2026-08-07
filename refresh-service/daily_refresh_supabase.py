@@ -484,7 +484,9 @@ def run_refresh(triggered_by=None):
 
         result = {
             'bank_balance': None, 'bank_status': 'error',
-            'sales_mtd': None, 'sales_prev_month': None, 'sales_status': 'error',
+            'sales_mtd': None, 'sales_prev_month': None,
+            'sales_previous_workday': None, 'sales_previous_workday_date': None,
+            'sales_status': 'error',
             'sales_on_hand': None, 'sales_on_hand_status': 'error',
             'debtors_total': None, 'debtors_not_due': None, 'debtors_overdue': None, 'debtors_status': 'error',
             'creditors_total': None, 'creditors_nzd_payables': None, 'creditors_status': 'error',
@@ -502,22 +504,35 @@ def run_refresh(triggered_by=None):
             previous_month_end = (current_month_start - timedelta(days=1)).date()
             previous_month_start = previous_month_end.replace(day=1)
 
+            # Last weekday before today -- steps back over Saturday/Sunday
+            # (weekday() 5/6) so "previous working day" on a Monday means
+            # the preceding Friday, not the weekend.
+            previous_workday = now.date() - timedelta(days=1)
+            while previous_workday.weekday() >= 5:
+                previous_workday -= timedelta(days=1)
+
             pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {'fromDate': start, 'toDate': end})
             prior_pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {
                 'fromDate': previous_month_start.isoformat(), 'toDate': previous_month_end.isoformat()
+            })
+            workday_pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {
+                'fromDate': previous_workday.isoformat(), 'toDate': previous_workday.isoformat()
             })
             bank_report = xero_get(token, tenant, 'Reports/BankSummary', {'fromDate': start, 'toDate': end})
 
             income_labels = split(cfg.get('xero_pnl_income_row_labels'))
             sales, matched_rows = pnl_sales_total(pnl, income_labels)
             prior_sales, prior_matched_rows = pnl_sales_total(prior_pnl, income_labels)
+            workday_sales, workday_matched_rows = pnl_sales_total(workday_pnl, income_labels)
             bank = bank_summary_total(bank_report, split(cfg.get('xero_bank_account_names')))
             debt, debt_not_due, debt_overdue, cred = xero_contact_balances(token, tenant)
             nzd_payables, nzd_payable_count = xero_nzd_payables(token, tenant)
 
             result.update({
                 'bank_balance': bank, 'bank_status': 'ok',
-                'sales_mtd': sales, 'sales_prev_month': prior_sales, 'sales_status': 'ok',
+                'sales_mtd': sales, 'sales_prev_month': prior_sales,
+                'sales_previous_workday': workday_sales, 'sales_previous_workday_date': previous_workday,
+                'sales_status': 'ok',
                 'debtors_total': debt, 'debtors_not_due': debt_not_due, 'debtors_overdue': debt_overdue,
                 'debtors_status': 'ok',
                 'creditors_total': cred, 'creditors_nzd_payables': nzd_payables, 'creditors_status': 'ok',
@@ -525,9 +540,11 @@ def run_refresh(triggered_by=None):
 
             matched_text = '; '.join(f'{n}={v:.2f}' for n, v in matched_rows)
             prior_matched_text = '; '.join(f'{n}={v:.2f}' for n, v in prior_matched_rows)
+            workday_matched_text = '; '.join(f'{n}={v:.2f}' for n, v in workday_matched_rows)
             log_step(conn, 'Xero', 'Refresh', 'OK',
                      f'Bank={bank}; Sales MTD={sales} from [{matched_text}]; '
                      f'Previous month sales={prior_sales} from [{prior_matched_text}]; '
+                     f'Previous workday ({previous_workday.isoformat()}) sales={workday_sales} from [{workday_matched_text}]; '
                      f'Debtors={debt}; Not yet due={debt_not_due}; Due/overdue={debt_overdue}; '
                      f'Creditors={cred}; NZD operational payables={nzd_payables} across {nzd_payable_count} bills',
                      triggered_by)
@@ -558,15 +575,17 @@ def run_refresh(triggered_by=None):
             cur.execute(
                 """
                 insert into reporting.report_snapshots
-                  (as_of, bank_balance, bank_status, sales_mtd, sales_prev_month, sales_status,
+                  (as_of, bank_balance, bank_status, sales_mtd, sales_prev_month,
+                   sales_previous_workday, sales_previous_workday_date, sales_status,
                    sales_on_hand, sales_on_hand_status, debtors_total, debtors_not_due, debtors_overdue,
                    debtors_status, creditors_total, creditors_nzd_payables, creditors_status,
                    overall_status, triggered_by)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 returning id
                 """,
                 (now, result['bank_balance'], result['bank_status'], result['sales_mtd'],
-                 result['sales_prev_month'], result['sales_status'], result['sales_on_hand'],
+                 result['sales_prev_month'], result['sales_previous_workday'], result['sales_previous_workday_date'],
+                 result['sales_status'], result['sales_on_hand'],
                  result['sales_on_hand_status'], result['debtors_total'], result['debtors_not_due'],
                  result['debtors_overdue'], result['debtors_status'], result['creditors_total'],
                  result['creditors_nzd_payables'], result['creditors_status'], overall, triggered_by),
