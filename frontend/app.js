@@ -251,9 +251,11 @@
   // the actual day, e.g. "Friday, 7 Aug" rather than a generic label.
   function fmtDayLabel(dateStr) {
     if (!dateStr) return null;
-    // dateStr is a plain 'YYYY-MM-DD' from Postgres -- parse as local, not UTC,
-    // so it doesn't shift a day depending on the viewer's timezone.
-    const [y, m, d] = dateStr.split('-').map(Number);
+    // node-postgres serializes a `date` column as a full ISO datetime
+    // string (e.g. "2026-08-06T00:00:00.000Z"), not a plain 'YYYY-MM-DD'
+    // -- slice(0, 10) handles both. Parsed as local, not UTC, so it
+    // doesn't shift a day depending on the viewer's timezone.
+    const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number);
     const date = new Date(y, m - 1, d);
     return date.toLocaleDateString('en-NZ', { weekday: 'long', day: 'numeric', month: 'short' });
   }
