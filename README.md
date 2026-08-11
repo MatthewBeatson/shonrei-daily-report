@@ -21,8 +21,20 @@ refresh-service/       Always-on Python service that pulls Xero + Cin7 and write
 backend/                Node/Express API + serves the frontend as static files
 frontend/               Plain HTML/CSS/JS, no build step, no framework
 render.yaml             2 Render services: web, refresh-service
-.github/workflows/      Hourly GitHub Actions trigger for the refresh service (Render has no free Cron Job plan)
+.github/workflows/      Hourly refresh trigger + a 10-minute keep-alive ping (see below)
 ```
+
+## Render free-tier cold starts
+
+Both services are on Render's free plan, which spins a service down after
+15 minutes idle -- whoever hits it next sees Render's own "waking up"
+splash for ~30-60s before the real app loads. `keep-alive.yml` pings
+`/health` on both every 10 minutes to stop that from happening in
+practice. If it ever stops being enough (GitHub Actions schedules aren't
+perfectly punctual under load), the real fix is upgrading
+`shonrei-report-web` to a paid Render plan (genuinely always-on) rather
+than a tighter ping interval -- delete `keep-alive.yml` at that point,
+it'd be redundant.
 
 ## Architecture in one paragraph
 
