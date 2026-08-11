@@ -1,0 +1,22 @@
+name: Keep-alive ping
+
+# Render's free tier spins a web service down after 15 minutes of no
+# traffic, showing a ~30-60s "waking up" splash to whoever hits it next.
+# This just pings /health on both services every 10 minutes -- comfortably
+# under that 15-minute window even allowing for some scheduling jitter --
+# so in practice nobody sees that splash. Cheap and free; if it ever stops
+# being enough, the real fix is upgrading shonrei-report-web to a paid
+# Render plan (genuinely always-on), not a tighter ping interval.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping shonrei-report-web
+        run: curl -sS -o /dev/null -w "web: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-web.onrender.com/health || true
+      - name: Ping shonrei-report-refresh
+        run: curl -sS -o /dev/null -w "refresh: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-refresh.onrender.com/health || true
