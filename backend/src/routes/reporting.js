@@ -7,14 +7,23 @@ const { requireReportAuth, requireEdit } = require('../middleware/reportAuth');
 const router = express.Router();
 router.use(requireReportAuth);
 
-// Mirrors the Excel Dashboard sheet's formulas exactly (see
+// Net short-term position, variance to breakeven, and the working capital
+// ratio mirror the original Excel Dashboard sheet exactly (see
 // daily_refresh.py / Shonrei_Daily_Key_Figures.xlsx):
 //   Net short-term position = Net liquid working capital
 //                            = bank + debtors_total - creditors_total
 //   Variance to breakeven   = sales_mtd - projected_sales
-//   Remaining sales after month-end
-//                            = variance_to_breakeven - (sales_prev_month - sales_mtd)
 //   Liquid working capital ratio = (bank + debtors_total) / creditors_total
+//
+// Remaining sales after month-end was revised from the original Excel
+// formula at the user's request (2026-08-07) -- comparing a complete
+// previous month against a barely-started current month produced a
+// misleadingly huge negative swing in the first days of every month. Now:
+//   Remaining sales after month-end = sales_on_hand - (projected_sales - sales_mtd)
+// i.e. does the backlog of orders already on hand (booked but not yet
+// invoiced) cover the remaining gap between projected sales and what's
+// been invoiced so far this month.
+//
 // Computed here at read time from the latest snapshot + current manual
 // inputs, rather than stored, so there's one source of truth instead of
 // figures that can drift out of sync with their inputs.
@@ -25,13 +34,13 @@ function deriveCalculated(snapshot, manualInputs) {
   const debtorsTotal = Number(snapshot.debtors_total ?? 0);
   const creditorsTotal = Number(snapshot.creditors_total ?? 0);
   const salesMtd = Number(snapshot.sales_mtd ?? 0);
-  const salesPrevMonth = Number(snapshot.sales_prev_month ?? 0);
+  const salesOnHand = Number(snapshot.sales_on_hand ?? 0);
   const projectedSales = manualInputs?.projected_sales != null ? Number(manualInputs.projected_sales) : null;
 
   const netShortTermPosition = bank + debtorsTotal - creditorsTotal;
   const varianceToBreakeven = projectedSales != null ? salesMtd - projectedSales : null;
-  const remainingSalesAfterMonthEnd = varianceToBreakeven != null
-    ? varianceToBreakeven - (salesPrevMonth - salesMtd)
+  const remainingSalesAfterMonthEnd = projectedSales != null
+    ? salesOnHand - (projectedSales - salesMtd)
     : null;
   const workingCapitalRatio = creditorsTotal ? (bank + debtorsTotal) / creditorsTotal : 0;
 

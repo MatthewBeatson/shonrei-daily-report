@@ -340,7 +340,7 @@
     });
     $('row-remaining').innerHTML = renderRow({
       label: 'Remaining sales after month-end', bold: true, value: fmtMoney(calculated?.remaining_sales_after_month_end),
-      valueClass: 'calculated', source: 'Calculated', status: 'calculated',
+      valueClass: 'calculated', source: 'Sales on hand − (Projected − MTD)', status: 'calculated',
     });
 
     // ---- Working capital ----
