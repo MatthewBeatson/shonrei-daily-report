@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping shonrei-report-web
-        run: curl -sS -o /dev/null -w "web: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-web.onrender.com/health || true
+        run: |
+          curl -sS -o /dev/null -w "web: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-web.onrender.com/health || true
       - name: Ping shonrei-report-refresh
-        run: curl -sS -o /dev/null -w "refresh: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-refresh.onrender.com/health || true
+        run: |
+          curl -sS -o /dev/null -w "refresh: HTTP %{http_code}\n" --max-time 60 https://shonrei-report-refresh.onrender.com/health || true
