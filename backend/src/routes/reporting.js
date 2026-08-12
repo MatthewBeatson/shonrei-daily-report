@@ -158,17 +158,40 @@ router.post('/refresh', asyncHandler(async (req, res) => {
     throw new ApiError(500, 'Refresh service is not configured (REFRESH_SERVICE_URL / REFRESH_SHARED_SECRET)');
   }
 
-  const response = await fetch(`${refreshUrl}/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
-    body: JSON.stringify({ triggered_by: req.reportUser.id }),
-  });
+  // Explicit timeout + a real network-error catch: without this, a
+  // genuinely unreachable refresh-service just hangs the request instead
+  // of failing with a message the user can act on. 45s is generous enough
+  // to survive an occasional Render cold start (keep-alive.yml should
+  // mostly prevent those, but isn't guaranteed).
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45000);
+  let response;
+  try {
+    response = await fetch(`${refreshUrl}/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
+      body: JSON.stringify({ triggered_by: req.reportUser.id }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    throw new ApiError(502, "Couldn't reach the refresh service -- it may be waking up. Try again in a moment.");
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (response.status === 409) {
     throw new ApiError(409, 'A refresh is already running');
   }
-  if (!response.ok) {
-    throw new ApiError(502, 'Failed to start refresh', await response.text());
+
+  // A sleeping Render service can return its OWN "waking up" page --
+  // HTTP 200 with an HTML body -- rather than ever reaching the real
+  // Flask endpoint. response.ok alone doesn't catch that: this used to
+  // report "started" while nothing had actually happened, silently.
+  // Anything that isn't real JSON from our own service gets treated the
+  // same as a hard failure.
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok || !contentType.includes('application/json')) {
+    throw new ApiError(502, "Refresh service didn't respond correctly -- it may be waking up. Try again in a moment.");
   }
 
   res.status(202).json({ status: 'started' });

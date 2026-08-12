@@ -7,9 +7,16 @@ name: Keep-alive ping
 # so in practice nobody sees that splash. Cheap and free; if it ever stops
 # being enough, the real fix is upgrading shonrei-report-web to a paid
 # Render plan (genuinely always-on), not a tighter ping interval.
+#
+# Minute offsets (:04, :14, ... not :00, :10, ...) are deliberate -- GitHub
+# documents that scheduled workflows queue up and can be delayed at round
+# numbers, since that's when the most cron jobs across all of GitHub fire
+# at once. Landing off those peaks makes the actual fire time closer to
+# on-schedule, which matters here since a badly-delayed ping is exactly
+# what lets the service fall asleep in the gap.
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "4-59/10 * * * *"
   workflow_dispatch: {}
 
 jobs:

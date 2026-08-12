@@ -6,9 +6,15 @@ name: Hourly refresh trigger
 # whether "now" in Pacific/Auckland is actually inside the configured
 # business-hours window before doing any real Xero/Cin7 work, so this
 # schedule never needs adjusting for NZ daylight saving.
+#
+# Minute offset (:12, not :00) is deliberate -- GitHub documents that
+# scheduled workflows queue up and can be delayed specifically at the top
+# of every hour, since that's when the most cron jobs across all of
+# GitHub fire at once. Landing off that peak makes the actual fire time
+# closer to on-schedule.
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "12 * * * *"
   workflow_dispatch: {} # lets you fire it manually from the Actions tab too
 
 jobs:
