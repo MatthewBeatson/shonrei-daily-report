@@ -316,7 +316,7 @@
     $('row-sales-workday').innerHTML = renderRow({
       label: `Sales invoiced — ${fmtDayLabel(snapshot?.sales_previous_workday_date) || 'previous working day'}`,
       value: fmtMoney(snapshot?.sales_previous_workday), valueClass: 'imported',
-      source: 'Xero P&L', refreshedAt: fmtTime(snapshot?.as_of), status: snapshot?.sales_status,
+      source: 'Xero P&L', refreshedAt: fmtTime(snapshot?.as_of), status: snapshot?.sales_previous_workday_status,
     });
     $('row-sales-prev').innerHTML = renderRow({
       label: 'Sales invoiced — previous month', value: fmtMoney(snapshot?.sales_prev_month), valueClass: 'imported',

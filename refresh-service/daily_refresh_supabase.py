@@ -209,7 +209,16 @@ def row_label_value(row):
     return label, (values[-1] if values else 0.0)
 
 
-def pnl_sales_total(report, configured_labels):
+def pnl_sales_total(report, configured_labels, allow_empty=False):
+    # allow_empty: for a single-day report where zero sales that day is a
+    # legitimate outcome, not a sign of misconfiguration (used for the
+    # previous-workday figure). Xero's report omits the Income section
+    # entirely rather than returning explicit $0 rows when nothing was
+    # invoiced in the requested date range -- without this, that
+    # legitimate "nothing happened" result raised the same error as a
+    # genuinely mislabeled configured_labels setting would, which (before
+    # 2026-08-13) took the whole Xero refresh down with it, hiding
+    # otherwise-successful bank/debtors/creditors/MTD figures too.
     labels = {norm(x) for x in configured_labels}
     available = []
     income_rows = []
@@ -232,6 +241,8 @@ def pnl_sales_total(report, configured_labels):
             return sum(value for _, value in matched), matched
 
     if labels and not matched:
+        if allow_empty and not available:
+            return 0.0, []
         raise RuntimeError('No configured sales rows were found in the Xero P&L. Configured: '
                             + ', '.join(sorted(labels)) + '. Available Income rows: ' + ', '.join(available))
     if labels:
@@ -486,6 +497,7 @@ def run_refresh(triggered_by=None):
             'bank_balance': None, 'bank_status': 'error',
             'sales_mtd': None, 'sales_prev_month': None,
             'sales_previous_workday': None, 'sales_previous_workday_date': None,
+            'sales_previous_workday_status': 'error',
             'sales_status': 'error',
             'sales_on_hand': None, 'sales_on_hand_status': 'error',
             'debtors_total': None, 'debtors_not_due': None, 'debtors_overdue': None, 'debtors_status': 'error',
@@ -515,23 +527,38 @@ def run_refresh(triggered_by=None):
             prior_pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {
                 'fromDate': previous_month_start.isoformat(), 'toDate': previous_month_end.isoformat()
             })
-            workday_pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {
-                'fromDate': previous_workday.isoformat(), 'toDate': previous_workday.isoformat()
-            })
             bank_report = xero_get(token, tenant, 'Reports/BankSummary', {'fromDate': start, 'toDate': end})
 
             income_labels = split(cfg.get('xero_pnl_income_row_labels'))
             sales, matched_rows = pnl_sales_total(pnl, income_labels)
             prior_sales, prior_matched_rows = pnl_sales_total(prior_pnl, income_labels)
-            workday_sales, workday_matched_rows = pnl_sales_total(workday_pnl, income_labels)
             bank = bank_summary_total(bank_report, split(cfg.get('xero_bank_account_names')))
             debt, debt_not_due, debt_overdue, cred = xero_contact_balances(token, tenant)
             nzd_payables, nzd_payable_count = xero_nzd_payables(token, tenant)
+
+            # Deliberately its own try/except, separate from everything
+            # else above -- a failure here must never take down the
+            # bank/MTD/prior-month/debtors/creditors figures that already
+            # succeeded (that's exactly what happened before 2026-08-13:
+            # a zero-sales single day raised an error that discarded
+            # everything else this block had already fetched).
+            workday_sales = None
+            workday_matched_rows = []
+            workday_status = 'error'
+            try:
+                workday_pnl = xero_get(token, tenant, 'Reports/ProfitAndLoss', {
+                    'fromDate': previous_workday.isoformat(), 'toDate': previous_workday.isoformat()
+                })
+                workday_sales, workday_matched_rows = pnl_sales_total(workday_pnl, income_labels, allow_empty=True)
+                workday_status = 'ok'
+            except Exception:
+                log_step(conn, 'Xero', 'Previous workday sales', 'ERROR', traceback.format_exc(), triggered_by)
 
             result.update({
                 'bank_balance': bank, 'bank_status': 'ok',
                 'sales_mtd': sales, 'sales_prev_month': prior_sales,
                 'sales_previous_workday': workday_sales, 'sales_previous_workday_date': previous_workday,
+                'sales_previous_workday_status': workday_status,
                 'sales_status': 'ok',
                 'debtors_total': debt, 'debtors_not_due': debt_not_due, 'debtors_overdue': debt_overdue,
                 'debtors_status': 'ok',
@@ -576,16 +603,16 @@ def run_refresh(triggered_by=None):
                 """
                 insert into reporting.report_snapshots
                   (as_of, bank_balance, bank_status, sales_mtd, sales_prev_month,
-                   sales_previous_workday, sales_previous_workday_date, sales_status,
+                   sales_previous_workday, sales_previous_workday_date, sales_previous_workday_status, sales_status,
                    sales_on_hand, sales_on_hand_status, debtors_total, debtors_not_due, debtors_overdue,
                    debtors_status, creditors_total, creditors_nzd_payables, creditors_status,
                    overall_status, triggered_by)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 returning id
                 """,
                 (now, result['bank_balance'], result['bank_status'], result['sales_mtd'],
                  result['sales_prev_month'], result['sales_previous_workday'], result['sales_previous_workday_date'],
-                 result['sales_status'], result['sales_on_hand'],
+                 result['sales_previous_workday_status'], result['sales_status'], result['sales_on_hand'],
                  result['sales_on_hand_status'], result['debtors_total'], result['debtors_not_due'],
                  result['debtors_overdue'], result['debtors_status'], result['creditors_total'],
                  result['creditors_nzd_payables'], result['creditors_status'], overall, triggered_by),
