@@ -25,6 +25,7 @@
     login: $('view-login'),
     forgot: $('view-forgot'),
     setPassword: $('view-set-password'),
+    setPasswordMfa: $('view-set-password-mfa'),
     pinSetup: $('view-pin-setup'),
     dashboard: $('view-dashboard'),
     locked: $('view-locked'),
@@ -175,6 +176,47 @@
     });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error_description || body.msg || 'Could not set password');
+  }
+
+  // Supabase refuses to change a password on an AAL1 session (which is
+  // all a recovery link ever grants) once the account has a verified
+  // MFA factor -- shared Supabase project, so this affects any account
+  // that enrolled 2FA via the ordering portal's staff requirement, even
+  // though this app has no 2FA feature of its own. No dedicated
+  // "list factors" REST endpoint -- GET /auth/v1/user's own response
+  // includes the account's factors array (mirrors what the JS SDK's
+  // listFactors() does internally; this app has no SDK, just fetch).
+  async function supabaseGetVerifiedTotpFactor(accessToken) {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}` },
+    });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.error_description || body.msg || 'Could not check account');
+    return (body.factors || []).find((f) => f.factor_type === 'totp' && f.status === 'verified') || null;
+  }
+
+  // Challenge + verify a TOTP factor by hand (two calls -- mirrors the
+  // SDK's own mfa.challengeAndVerify()). On success the response IS a
+  // fresh token pair, now at AAL2 -- that's the access_token that has
+  // to be used for the actual password update, not the original
+  // (AAL1) recovery one.
+  async function supabaseMfaChallengeAndVerify(accessToken, factorId, code) {
+    const challengeRes = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/challenge`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const challengeBody = await challengeRes.json();
+    if (!challengeRes.ok) throw new Error(challengeBody.error_description || challengeBody.msg || 'Could not start 2FA challenge');
+
+    const verifyRes = await fetch(`${SUPABASE_URL}/auth/v1/factors/${factorId}/verify`, {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ challenge_id: challengeBody.id, code }),
+    });
+    const verifyBody = await verifyRes.json();
+    if (!verifyRes.ok) throw new Error(verifyBody.error_description || verifyBody.msg || 'Incorrect code');
+    return verifyBody.access_token;
   }
 
   async function ensureFreshToken() {
@@ -601,7 +643,24 @@
     }
   });
 
+  $('set-password-mfa-submit').addEventListener('click', async () => {
+    const code = $('set-password-mfa-code').value.trim();
+    const err = $('set-password-mfa-error');
+    err.textContent = '';
+    if (!/^\d{6}$/.test(code)) { err.textContent = 'Enter the 6-digit code.'; return; }
+    try {
+      // Elevates to AAL2 -- swap in the new access_token so the
+      // subsequent password update actually satisfies Supabase's
+      // requirement, instead of retrying with the original AAL1 one.
+      recoveryAccessToken = await supabaseMfaChallengeAndVerify(recoveryAccessToken, pendingMfaFactorId, code);
+      showView('setPassword');
+    } catch (e) {
+      err.textContent = e.message;
+    }
+  });
+
   let recoveryRefreshToken = null;
+  let pendingMfaFactorId = null;
   function checkForRecoveryLink() {
     const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : '';
     const params = new URLSearchParams(hash);
@@ -610,6 +669,20 @@
       recoveryRefreshToken = params.get('refresh_token');
       history.replaceState(null, '', window.location.pathname); // scrub tokens from the visible URL
       showView('setPassword');
+      // Fire-and-check: if this account has 2FA enrolled (shared
+      // Supabase project -- see supabaseGetVerifiedTotpFactor), swap to
+      // the re-verify screen before the password form is usable. Fails
+      // open to the normal password screen already shown above if the
+      // check itself errors, rather than blocking everyone on a
+      // transient network hiccup.
+      supabaseGetVerifiedTotpFactor(recoveryAccessToken)
+        .then((factor) => {
+          if (factor) {
+            pendingMfaFactorId = factor.id;
+            showView('setPasswordMfa');
+          }
+        })
+        .catch(() => {});
       return true;
     }
     return false;

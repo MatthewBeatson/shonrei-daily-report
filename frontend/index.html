@@ -53,6 +53,23 @@
     </div>
   </div>
 
+  <!-- Shown instead of view-set-password when the account has a verified
+       Supabase TOTP factor -- Supabase refuses to change a password on a
+       recovery session below AAL2 once MFA is enabled on the account
+       (this project's own PIN feature is separate from this; this is
+       Supabase's own 2FA, shared across every app on this Supabase
+       project, including the ordering portal). -->
+  <div class="center-screen hidden" id="view-set-password-mfa">
+    <div class="card">
+      <h1>Re-verify your 2FA code</h1>
+      <p class="sub">This account has two-factor authentication enabled. Enter the current code from your authenticator app before setting a new password.</p>
+      <label for="set-password-mfa-code">6-digit code</label>
+      <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" id="set-password-mfa-code" placeholder="123456" />
+      <button class="btn-primary" id="set-password-mfa-submit">Verify</button>
+      <div class="error-text" id="set-password-mfa-error"></div>
+    </div>
+  </div>
+
   <!-- ===================== PIN SETUP (first login) ===================== -->
   <div class="center-screen hidden" id="view-pin-setup">
     <div class="card">
