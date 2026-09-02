@@ -141,6 +141,32 @@
         <div id="row-commentary"></div>
       </div>
 
+      <!-- MONTHLY DISPATCH PLAN -->
+      <div class="report-section" id="dispatch-plan-section">
+        <div class="section-header">MONTHLY DISPATCH PLAN</div>
+        <div class="as-of" id="dispatch-plan-status">Not generated yet</div>
+        <div style="display:flex; gap:10px; margin:10px 0; flex-wrap:wrap;">
+          <a class="btn-secondary hidden" id="dispatch-plan-download" href="#" target="_blank" rel="noopener">Download workbook</a>
+          <button class="btn-secondary hidden" id="dispatch-plan-generate">Generate now</button>
+        </div>
+        <div class="error-text" id="dispatch-plan-error"></div>
+
+        <div id="dispatch-plan-overrides-wrap" class="hidden" style="margin-top:14px;">
+          <p class="sub" style="margin:0 0 8px;">Overrides -- relabel/split a customer's auto-grouped orders, or hold an SO# out of scheduling until it's flagged fulfillable again.</p>
+          <table class="overrides-table" id="dispatch-plan-overrides-table">
+            <thead><tr><th>SO#</th><th>Group label override</th><th>Hold</th><th>Note</th><th></th></tr></thead>
+            <tbody id="dispatch-plan-overrides-body"></tbody>
+          </table>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <input type="text" id="override-so" placeholder="SO#" style="width:110px;" />
+            <input type="text" id="override-label" placeholder="Group label override (optional)" style="width:220px;" />
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" id="override-hold" /> Hold</label>
+            <input type="text" id="override-note" placeholder="Note (optional)" style="width:200px;" />
+            <button class="btn-secondary" id="override-save">Save override</button>
+          </div>
+        </div>
+      </div>
+
       <div class="legend">
         <span><span class="dot" style="background:var(--green)"></span> Imported data</span>
         <span><span class="dot" style="background:var(--blue)"></span> Management input</span>

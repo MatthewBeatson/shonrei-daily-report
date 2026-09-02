@@ -24,6 +24,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify
 from daily_refresh_supabase import get_conn, run_refresh, load_settings
+from dispatch_plan_run import run_dispatch_plan
 
 app = Flask(__name__)
 
@@ -69,6 +70,13 @@ def _run_in_background(triggered_by):
             conn.close()
 
 
+def _run_dispatch_plan_in_background(triggered_by):
+    try:
+        run_dispatch_plan(triggered_by=triggered_by)
+    except Exception as exc:  # noqa: BLE001 -- last-resort net, run_dispatch_plan already logs internally
+        print(f'Unhandled error during dispatch plan generation: {exc}', flush=True)
+
+
 @app.get('/health')
 def health():
     return jsonify({'status': 'ok'})
@@ -105,6 +113,34 @@ def refresh():
         conn.close()
 
     thread = threading.Thread(target=_run_in_background, args=(triggered_by,), daemon=True)
+    thread.start()
+    return jsonify({'status': 'started'}), 202
+
+
+@app.post('/dispatch-plan/generate')
+def dispatch_plan_generate():
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    triggered_by = (request.get_json(silent=True) or {}).get('triggered_by')
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select status from reporting.dispatch_plan_current where id = 'current' for update")
+            row = cur.fetchone()
+            if row and row[0] == 'running':
+                conn.rollback()
+                return jsonify({'error': 'already_running'}), 409
+            cur.execute(
+                "update reporting.dispatch_plan_current set status = 'running', triggered_by = %s where id = 'current'",
+                (triggered_by,),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    thread = threading.Thread(target=_run_dispatch_plan_in_background, args=(triggered_by,), daemon=True)
     thread.start()
     return jsonify({'status': 'started'}), 202
 

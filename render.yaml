@@ -15,6 +15,12 @@ services:
         sync: false
       - key: SUPABASE_ANON_KEY
         sync: false
+      # Used only by the Monthly Dispatch Plan route (signs short-lived
+      # download URLs against the private 'dispatch-plans' Storage bucket)
+      # -- everything else here stays on the anon key + direct Postgres,
+      # see config/db.js.
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: SUPABASE_DB_HOST
         sync: false
       - key: SUPABASE_DB_PORT
@@ -53,6 +59,13 @@ services:
       # to a well-supported version instead of chasing wheel compatibility.
       - key: PYTHON_VERSION
         value: 3.12.6
+      # Used only by the Monthly Dispatch Plan (uploads the generated .xlsx
+      # to Supabase Storage) -- the daily Xero/Cin7 refresh never needed
+      # these, everything else here talks to Postgres directly.
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
       - key: SUPABASE_DB_HOST
         sync: false
       - key: SUPABASE_DB_PORT

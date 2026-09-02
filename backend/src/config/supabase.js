@@ -28,4 +28,16 @@ const supabaseAuth = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-module.exports = { supabaseAuth };
+// Service-role client, used ONLY for the Monthly Dispatch Plan's Storage
+// bucket (signing short-lived download URLs for the .xlsx the refresh
+// service uploads there) -- never for the `reporting` schema's Data API,
+// which stays off-limits via PostgREST for everything else (see
+// config/db.js). Optional: routes/dispatch-plan.js throws its own clear
+// error if a request needs this and the env var isn't set, rather than
+// crashing the whole app at startup like the two vars above.
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseStorage = SUPABASE_SERVICE_ROLE_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { autoRefreshToken: false, persistSession: false } })
+  : null;
+
+module.exports = { supabaseAuth, supabaseStorage };
