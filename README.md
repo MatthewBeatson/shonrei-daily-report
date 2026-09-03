@@ -5,12 +5,14 @@ Outlook email workflow. Same figures, same layout and color coding as the
 Excel dashboard, no email involved -- 6 management users sign in and see
 figures that refresh on a schedule or on demand.
 
-Reuses the **same Supabase project** as the Ordering Portal (JPL) repo
-(project ref `vwbbkkwzehkfhurhluza`) and the same Render account, but
-everything here lives in its own Postgres schema (`reporting`, not
-`public`) with its own, completely disjoint set of users and roles
-(`reporting.report_users`, not `public.users`/`user_store_roles`). Same
-Supabase Auth user pool, zero access overlap in either direction.
+Has its **own Supabase project** (project ref `zkwbapuclczezoxxtevk`) --
+this README used to claim it reused the same project as the Ordering
+Portal (JPL) repo (`vwbbkkwzehkfhurhluza`); that was stale/incorrect and
+was corrected on 2026-09-03. It does share the same Render account. The
+`reporting` schema convention (not `public`), its own disjoint set of
+users and roles (`reporting.report_users`, not `public.users`/
+`user_store_roles`), and the rest of this document still apply -- only
+the "which Supabase project" detail was wrong.
 
 ## How it's laid out
 

@@ -1,12 +1,19 @@
 -- 001_reporting_schema.sql
 -- Shonrei Daily Management Summary: reporting schema.
 --
--- Lives in the SAME Supabase project as the Ordering Portal (JPL) repo
--- (project ref vwbbkkwzehkfhurhluza), but in its own Postgres schema,
--- `reporting`, which is never referenced by and never references the
--- ordering-portal's `public` schema. Auth is the same Supabase Auth user
--- pool (auth.users), but authorization is completely disjoint: access here
--- is gated by membership in reporting.report_users, not by anything in
+-- CORRECTION (2026-09-03): this comment originally claimed this migration
+-- runs against the SAME Supabase project as the Ordering Portal (JPL) repo
+-- (vwbbkkwzehkfhurhluza). That was wrong -- this app has always had its
+-- own separate project (zkwbapuclczezoxxtevk); the two were never shared.
+-- Left here (rather than rewritten) since this migration already ran --
+-- see README.md for the corrected, current description. The rest of this
+-- comment (own `reporting` schema, own disjoint report_users) still holds.
+--
+-- Lives in its own Postgres schema, `reporting`, which is never referenced
+-- by and never references the ordering-portal's `public` schema (a
+-- different project entirely). Auth is this project's own Supabase Auth
+-- user pool (auth.users); authorization is gated by membership in
+-- reporting.report_users, not by anything in
 -- public.users / user_store_roles / user_client_roles / is_portal_admin().
 --
 -- Run once via the session pooler connection (see .env.example) — this
