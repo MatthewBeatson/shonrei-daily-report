@@ -129,19 +129,37 @@ class Group:
     assigned_week: int | None = None     # set by schedule_groups()
 
 
+def _normalize_order_number(v: str | None) -> str:
+    """SO#s are matched exactly against overrides, but a hand-typed override
+    (e.g. from the web UI) missing Cin7's 'SO-' prefix, or differing only in
+    case/whitespace, used to fail to match silently -- no error, the order
+    just stayed in normal scheduling as if no override existed at all (seen
+    live 2026-09-03: overrides stored as '16633'/'16875' never matched
+    Cin7's real 'SO-16633'/'SO-16875'). Normalizing both sides the same way
+    before comparing fixes that without requiring exact formatting from
+    whoever enters an override."""
+    v = (v or '').strip().upper()
+    if v and not v.startswith('SO-') and v.replace('-', '').isdigit():
+        v = f'SO-{v}'
+    return v
+
+
 def group_orders(orders: list[dict], overrides: dict[str, dict]) -> list[Group]:
     """Groups orders by (customer, order_date) by default. An override row
-    (keyed by order_number) with group_label_override splits that specific
-    order out into its own group (label = the override text) instead of
-    merging into the customer+date default -- this is how the real
-    workbook's "Grouped (28-Apr) - SYDNEY ORDERS" vs "... QLD ORDERS" split
-    gets reproduced. hold=True routes the order to the Holding list
-    (returned separately) regardless of everything else."""
+    (keyed by order_number, matched via _normalize_order_number so a
+    missing 'SO-' prefix/case/whitespace difference still matches) with
+    group_label_override splits that specific order out into its own group
+    (label = the override text) instead of merging into the customer+date
+    default -- this is how the real workbook's "Grouped (28-Apr) - SYDNEY
+    ORDERS" vs "... QLD ORDERS" split gets reproduced. hold=True routes the
+    order to the Holding list (returned separately) regardless of
+    everything else."""
     groups: dict[str, Group] = {}
     holding: list[Group] = []
+    overrides_by_normalized = {_normalize_order_number(k): v for k, v in overrides.items()}
 
     for order in orders:
-        override = overrides.get(order['order_number']) or {}
+        override = overrides_by_normalized.get(_normalize_order_number(order['order_number'])) or {}
         if override.get('hold'):
             g = Group(
                 key=f"hold:{order['order_number']}",

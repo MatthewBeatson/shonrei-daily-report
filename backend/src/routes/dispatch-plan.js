@@ -93,8 +93,23 @@ router.get('/overrides', asyncHandler(async (req, res) => {
   res.json({ overrides: rows });
 }));
 
+// Cin7 SO#s always carry an 'SO-' prefix, but a hand-typed override can
+// easily omit it (seen live 2026-09-03: '16633' stored instead of
+// 'SO-16633', so the hold silently never matched the real order -- no
+// error, it just stayed in normal scheduling). Normalizing on write keeps
+// what's stored in the DB matching what dispatch_plan_schedule.py will
+// compare it against, even though that module also normalizes on its own
+// side as a second line of defense for rows written before this existed.
+function normalizeOrderNumber(v) {
+  const trimmed = String(v || '').trim().toUpperCase();
+  if (trimmed && !trimmed.startsWith('SO-') && /^[0-9-]+$/.test(trimmed) && /\d/.test(trimmed)) {
+    return `SO-${trimmed}`;
+  }
+  return trimmed;
+}
+
 router.put('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res) => {
-  const { orderNumber } = req.params;
+  const orderNumber = normalizeOrderNumber(req.params.orderNumber);
   const { group_label_override, hold, note } = req.body || {};
 
   if (group_label_override !== undefined && group_label_override !== null && typeof group_label_override !== 'string') {
@@ -122,7 +137,8 @@ router.put('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res)
 }));
 
 router.delete('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res) => {
-  await pool.query('delete from reporting.dispatch_plan_overrides where order_number = $1', [req.params.orderNumber]);
+  const orderNumber = normalizeOrderNumber(req.params.orderNumber);
+  await pool.query('delete from reporting.dispatch_plan_overrides where order_number = $1', [orderNumber]);
   res.status(204).end();
 }));
 
