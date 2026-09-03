@@ -102,10 +102,13 @@ python scripts/run_migration.py migrations/004_previous_workday_sales.sql
 python scripts/run_migration.py migrations/005_workday_sales_status.sql
 python scripts/run_migration.py migrations/006_dispatch_plan.sql
 
-# Backend (serves the frontend too)
+# Backend (serves the frontend too) -- reads the project ROOT .env
+# (backend/src/index.js points dotenv at ../../.env explicitly; a bare
+# `cd backend && npm start` would otherwise look for backend/.env, which
+# doesn't exist)
+cp .env.example .env   # fill in real values, from the project root
 cd backend
 npm install
-cp ../.env.example ../.env   # fill in real values
 npm start   # http://localhost:3000
 
 # Refresh service (separate terminal)
