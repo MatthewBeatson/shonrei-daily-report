@@ -129,19 +129,57 @@ class Group:
     assigned_week: int | None = None     # set by schedule_groups()
 
 
-def group_orders(orders: list[dict], overrides: dict[str, dict]) -> list[Group]:
-    """Groups orders by (customer, order_date) by default. An override row
-    (keyed by order_number) with group_label_override splits that specific
-    order out into its own group (label = the override text) instead of
-    merging into the customer+date default -- this is how the real
-    workbook's "Grouped (28-Apr) - SYDNEY ORDERS" vs "... QLD ORDERS" split
-    gets reproduced. hold=True routes the order to the Holding list
-    (returned separately) regardless of everything else."""
+def _normalize_order_number(v: str | None) -> str:
+    """SO#s are matched exactly against overrides, but a hand-typed override
+    (e.g. from the web UI) missing Cin7's 'SO-' prefix, or differing only in
+    case/whitespace, used to fail to match silently -- no error, the order
+    just stayed in normal scheduling as if no override existed at all (seen
+    live 2026-09-03: overrides stored as '16633'/'16875' never matched
+    Cin7's real 'SO-16633'/'SO-16875'). Normalizing both sides the same way
+    before comparing fixes that without requiring exact formatting from
+    whoever enters an override."""
+    v = (v or '').strip().upper()
+    if v and not v.startswith('SO-') and v.replace('-', '').isdigit():
+        v = f'SO-{v}'
+    return v
+
+
+def group_orders(
+    orders: list[dict], overrides: dict[str, dict], large_order_carveout_threshold: float = 7500.0,
+) -> list[Group]:
+    """Groups orders by (customer, order_date, effective ship-by) by
+    default. An override row (keyed by order_number, matched via
+    _normalize_order_number so a missing 'SO-' prefix/case/whitespace
+    difference still matches) with group_label_override splits that
+    specific order out into its own group (label = the override text)
+    instead of merging into the customer+date default -- this is how the
+    real workbook's "Grouped (28-Apr) - SYDNEY ORDERS" vs "... QLD ORDERS"
+    split gets reproduced. hold=True routes the order to the Holding list
+    (returned separately) regardless of everything else.
+
+    "Effective ship-by" = an override's dispatch_date_override if set,
+    else Cin7's own ShipBy -- the override always wins, since it exists
+    specifically to let a human force/correct a date by hand. Both act
+    identically from here on: a hard pin schedule_groups() never moves.
+
+    Ship-by-ness is part of the auto-grouping key, not just customer+date --
+    otherwise a single promised/forced date on only one order in an
+    otherwise-unpinned customer+date batch would drag every sibling into
+    that date's week too, even though they individually have no such
+    constraint. Seen live 2026-09-04: 19 orders shared a customer and order
+    date, only 1 had a real ShipBy, and grouping (before this fix) pinned
+    all ~$29.8k of the other 18's value to that single order's date.
+
+    An individual order at or above large_order_carveout_threshold also
+    never merges into a customer+date auto-group -- it always gets its own
+    singleton group/line, so a large order's value is never buried inside
+    a combined group total (Matthew's call 2026-09-04, default $7,500)."""
     groups: dict[str, Group] = {}
     holding: list[Group] = []
+    overrides_by_normalized = {_normalize_order_number(k): v for k, v in overrides.items()}
 
     for order in orders:
-        override = overrides.get(order['order_number']) or {}
+        override = overrides_by_normalized.get(_normalize_order_number(order['order_number'])) or {}
         if override.get('hold'):
             g = Group(
                 key=f"hold:{order['order_number']}",
@@ -156,11 +194,21 @@ def group_orders(orders: list[dict], overrides: dict[str, dict]) -> list[Group]:
             holding.append(g)
             continue
 
+        effective_ship_by = override.get('dispatch_date_override') or order['ship_by']
+
         label_override = override.get('group_label_override')
         if label_override:
             key = f"override:{order['customer']}:{label_override}"
+        elif order['value_excl_gst'] >= large_order_carveout_threshold:
+            # Never merge a large order into a combined group -- its value
+            # would otherwise be buried inside a customer+date group total.
+            # Keyed by order_number so it's always its own singleton group,
+            # even if a same-customer/same-date sibling is also large.
+            key = f"large:{order['order_number']}"
         else:
-            key = f"auto:{order['customer']}:{order['order_date'].isoformat() if order['order_date'] else 'none'}"
+            key = (f"auto:{order['customer']}:"
+                   f"{order['order_date'].isoformat() if order['order_date'] else 'none'}:"
+                   f"{effective_ship_by.isoformat() if effective_ship_by else 'none'}")
 
         g = groups.get(key)
         if g is None:
@@ -176,8 +224,8 @@ def group_orders(orders: list[dict], overrides: dict[str, dict]) -> list[Group]:
         g.value_excl_gst += order['value_excl_gst']
         if order['order_date'] and (g.order_date is None or order['order_date'] < g.order_date):
             g.order_date = order['order_date']
-        if order['ship_by'] and (g.ship_by is None or order['ship_by'] < g.ship_by):
-            g.ship_by = order['ship_by']
+        if effective_ship_by and (g.ship_by is None or effective_ship_by < g.ship_by):
+            g.ship_by = effective_ship_by
 
     return list(groups.values()) + holding
 

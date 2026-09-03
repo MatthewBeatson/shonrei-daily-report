@@ -13,6 +13,15 @@
 // localStorage instead so it survives closing the browser; on the next
 // visit that resumes straight into the PIN lock screen rather than full
 // login. It's strictly opt-in and per-device, reversible with one tap.
+//
+// The Monthly Dispatch Plan is its own page (dispatch-plan.html +
+// dispatch-plan.js), not a section here -- Matthew's call 2026-09-04.
+// dispatch-plan.js duplicates this file's whole login/PIN/lock/session
+// block rather than sharing it via a common module: this project
+// deliberately has no build step, and every other page here (this one,
+// and now that one) is meant to work standalone by just being served as a
+// static file. Keep the two blocks in sync by hand if session/PIN/lock
+// behavior ever changes.
 
 (() => {
   const CONFIG = window.__CONFIG__ || {};
@@ -449,7 +458,6 @@
     } catch (e) {
       if (e.message !== 'Unauthorized') $('dashboard-error').textContent = e.message;
     }
-    loadDispatchPlan();
   }
 
   let pollTimer = null;
@@ -466,106 +474,6 @@
       } catch (e) { /* keep trying */ }
     }, 4000);
   }
-
-  // ---------------------------------------------------------------
-  // Monthly Dispatch Plan
-  // ---------------------------------------------------------------
-  async function loadDispatchPlan() {
-    try {
-      const data = await api('/reporting/dispatch-plan');
-      const statusEl = $('dispatch-plan-status');
-      const downloadBtn = $('dispatch-plan-download');
-      if (data.status === 'ok' && data.download_url) {
-        const months = (data.months_covered || []).join(', ') || 'no months';
-        statusEl.textContent = `Generated ${fmtTime(data.generated_at)} · covers ${months}`;
-        downloadBtn.href = data.download_url;
-        downloadBtn.classList.remove('hidden');
-      } else if (data.status === 'error') {
-        statusEl.textContent = 'Last generation attempt failed -- see the refresh log, or try Generate now.';
-        downloadBtn.classList.add('hidden');
-      } else {
-        statusEl.textContent = 'Not generated yet -- runs automatically every Monday morning.';
-        downloadBtn.classList.add('hidden');
-      }
-      if (state.reportUser?.can_edit) {
-        $('dispatch-plan-generate').classList.remove('hidden');
-        $('dispatch-plan-overrides-wrap').classList.remove('hidden');
-        await loadDispatchPlanOverrides();
-      }
-    } catch (e) {
-      if (e.message !== 'Unauthorized') $('dispatch-plan-error').textContent = e.message;
-    }
-  }
-
-  async function loadDispatchPlanOverrides() {
-    try {
-      const { overrides } = await api('/reporting/dispatch-plan/overrides');
-      const body = $('dispatch-plan-overrides-body');
-      body.innerHTML = overrides.length
-        ? overrides.map((o) => `
-          <tr>
-            <td>${o.order_number}</td>
-            <td>${o.group_label_override || ''}</td>
-            <td>${o.hold ? 'Yes' : ''}</td>
-            <td>${o.note || ''}</td>
-            <td class="override-delete"><button class="link-danger" data-delete-override="${o.order_number}">Remove</button></td>
-          </tr>`).join('')
-        : '<tr><td colspan="5" style="color:var(--gray);">No overrides set.</td></tr>';
-    } catch (e) {
-      $('dispatch-plan-error').textContent = e.message;
-    }
-  }
-
-  $('dispatch-plan-generate').addEventListener('click', async () => {
-    const btn = $('dispatch-plan-generate');
-    btn.disabled = true;
-    $('dispatch-plan-error').textContent = '';
-    try {
-      await api('/reporting/dispatch-plan/generate', { method: 'POST' });
-      $('dispatch-plan-status').textContent = 'Generating… this can take a few minutes (pulling every open Cin7 order). Refresh the page shortly.';
-    } catch (e) {
-      $('dispatch-plan-error').textContent = e.message;
-    } finally {
-      btn.disabled = false;
-    }
-  });
-
-  $('dispatch-plan-overrides-body').addEventListener('click', async (e) => {
-    const orderNumber = e.target?.dataset?.deleteOverride;
-    if (!orderNumber) return;
-    try {
-      await api(`/reporting/dispatch-plan/overrides/${encodeURIComponent(orderNumber)}`, { method: 'DELETE' });
-      loadDispatchPlanOverrides();
-    } catch (err) {
-      $('dispatch-plan-error').textContent = err.message;
-    }
-  });
-
-  $('override-save').addEventListener('click', async () => {
-    const orderNumber = $('override-so').value.trim();
-    if (!orderNumber) {
-      $('dispatch-plan-error').textContent = 'Enter an SO# to save an override.';
-      return;
-    }
-    try {
-      await api(`/reporting/dispatch-plan/overrides/${encodeURIComponent(orderNumber)}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          group_label_override: $('override-label').value.trim() || null,
-          hold: $('override-hold').checked,
-          note: $('override-note').value.trim() || null,
-        }),
-      });
-      $('override-so').value = '';
-      $('override-label').value = '';
-      $('override-hold').checked = false;
-      $('override-note').value = '';
-      $('dispatch-plan-error').textContent = '';
-      loadDispatchPlanOverrides();
-    } catch (e) {
-      $('dispatch-plan-error').textContent = e.message;
-    }
-  });
 
   // ---------------------------------------------------------------
   // Edit manual inputs modal

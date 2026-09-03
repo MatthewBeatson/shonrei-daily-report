@@ -87,15 +87,32 @@ router.post('/generate', requireEdit, asyncHandler(async (req, res) => {
 
 router.get('/overrides', asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
-    'select order_number, group_label_override, hold, note, updated_by, updated_at ' +
+    'select order_number, group_label_override, hold, note, dispatch_date_override, updated_by, updated_at ' +
     'from reporting.dispatch_plan_overrides order by updated_at desc'
   );
   res.json({ overrides: rows });
 }));
 
+// Cin7 SO#s always carry an 'SO-' prefix, but a hand-typed override can
+// easily omit it (seen live 2026-09-03: '16633' stored instead of
+// 'SO-16633', so the hold silently never matched the real order -- no
+// error, it just stayed in normal scheduling). Normalizing on write keeps
+// what's stored in the DB matching what dispatch_plan_schedule.py will
+// compare it against, even though that module also normalizes on its own
+// side as a second line of defense for rows written before this existed.
+function normalizeOrderNumber(v) {
+  const trimmed = String(v || '').trim().toUpperCase();
+  if (trimmed && !trimmed.startsWith('SO-') && /^[0-9-]+$/.test(trimmed) && /\d/.test(trimmed)) {
+    return `SO-${trimmed}`;
+  }
+  return trimmed;
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 router.put('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res) => {
-  const { orderNumber } = req.params;
-  const { group_label_override, hold, note } = req.body || {};
+  const orderNumber = normalizeOrderNumber(req.params.orderNumber);
+  const { group_label_override, hold, note, dispatch_date_override } = req.body || {};
 
   if (group_label_override !== undefined && group_label_override !== null && typeof group_label_override !== 'string') {
     throw new ApiError(400, 'group_label_override must be a string');
@@ -106,23 +123,32 @@ router.put('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res)
   if (note !== undefined && note !== null && typeof note !== 'string') {
     throw new ApiError(400, 'note must be a string');
   }
+  // A promised/forced date is a hard pin the scheduler never moves -- 'YYYY-
+  // MM-DD' only (an <input type="date"> already gives this shape), no free-
+  // text parsing that could silently land on the wrong day.
+  if (dispatch_date_override !== undefined && dispatch_date_override !== null && !DATE_RE.test(dispatch_date_override)) {
+    throw new ApiError(400, 'dispatch_date_override must be a YYYY-MM-DD date string');
+  }
 
   const { rows } = await pool.query(
-    `insert into reporting.dispatch_plan_overrides (order_number, group_label_override, hold, note, updated_by)
-     values ($1, $2, coalesce($3, false), $4, $5)
+    `insert into reporting.dispatch_plan_overrides
+       (order_number, group_label_override, hold, note, dispatch_date_override, updated_by)
+     values ($1, $2, coalesce($3, false), $4, $5, $6)
      on conflict (order_number) do update set
        group_label_override = excluded.group_label_override,
        hold = excluded.hold,
        note = excluded.note,
+       dispatch_date_override = excluded.dispatch_date_override,
        updated_by = excluded.updated_by
      returning *`,
-    [orderNumber, group_label_override ?? null, hold, note ?? null, req.reportUser.id]
+    [orderNumber, group_label_override ?? null, hold, note ?? null, dispatch_date_override ?? null, req.reportUser.id]
   );
   res.json({ override: rows[0] });
 }));
 
 router.delete('/overrides/:orderNumber', requireEdit, asyncHandler(async (req, res) => {
-  await pool.query('delete from reporting.dispatch_plan_overrides where order_number = $1', [req.params.orderNumber]);
+  const orderNumber = normalizeOrderNumber(req.params.orderNumber);
+  await pool.query('delete from reporting.dispatch_plan_overrides where order_number = $1', [orderNumber]);
   res.status(204).end();
 }));
 

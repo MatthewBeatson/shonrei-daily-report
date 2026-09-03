@@ -42,8 +42,14 @@ def _cin7_headers():
 
 def _load_overrides(conn) -> dict[str, dict]:
     with conn.cursor() as cur:
-        cur.execute('select order_number, group_label_override, hold, note from reporting.dispatch_plan_overrides')
-        return {row[0]: {'group_label_override': row[1], 'hold': row[2], 'note': row[3]} for row in cur.fetchall()}
+        cur.execute(
+            'select order_number, group_label_override, hold, note, dispatch_date_override '
+            'from reporting.dispatch_plan_overrides'
+        )
+        return {
+            row[0]: {'group_label_override': row[1], 'hold': row[2], 'note': row[3], 'dispatch_date_override': row[4]}
+            for row in cur.fetchall()
+        }
 
 
 def _latest_sales_mtd(conn) -> float:
@@ -89,12 +95,14 @@ def run_dispatch_plan(triggered_by=None):
         now = datetime.now(tz)
         today = now.date()
         monthly_target = float(cfg.get('dispatch_plan_monthly_target') or 220000)
+        small_order_threshold = float(cfg.get('dispatch_plan_small_order_threshold') or 1000)
+        large_order_carveout_threshold = float(cfg.get('dispatch_plan_large_order_carveout_threshold') or 7500)
 
         try:
             headers = _cin7_headers()
             orders = fetch_open_orders(conn, cfg, headers)
             overrides = _load_overrides(conn)
-            groups = group_orders(orders, overrides)
+            groups = group_orders(orders, overrides, large_order_carveout_threshold)
 
             invoiced_to_date = _latest_sales_mtd(conn)
             breakeven = _monthly_breakeven(conn)
@@ -109,7 +117,7 @@ def run_dispatch_plan(triggered_by=None):
             for mk in schedule.keys():
                 invoiced_by_month.setdefault(mk, 0.0)
 
-            wb = build_workbook(schedule, holding, monthly_target, invoiced_by_month, breakeven, today)
+            wb = build_workbook(schedule, holding, monthly_target, invoiced_by_month, breakeven, today, small_order_threshold)
 
             buf = io.BytesIO()
             wb.save(buf)

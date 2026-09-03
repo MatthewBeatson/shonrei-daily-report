@@ -80,7 +80,7 @@ def test_ship_by_is_a_hard_pin_never_moved_by_pacing():
         orders.append(make_order(f'SO-{i}', 'SmallCo', date(2026, 5, 1), 100000))
     groups = group_orders(orders, overrides={})
     schedule, holding = schedule_groups(groups, today=today, monthly_target=220000)
-    pinned = next(g for g in groups if g.key.startswith('auto:BigCo'))
+    pinned = next(g for g in groups if 'SO-PIN' in g.order_numbers)
     assert pinned.assigned_month == '2026-10'
     assert pinned.scheduling_date == date(2026, 10, 15)
 
@@ -144,6 +144,58 @@ def test_holding_orders_never_scheduled():
     schedule, holding = schedule_groups(groups, today=date(2026, 6, 1))
     assert schedule == {}
     assert len(holding) == 1
+
+
+def test_one_pinned_order_does_not_drag_unpinned_siblings_into_its_date():
+    # Regression for a live bug (2026-09-04): 19 orders shared a customer +
+    # order date; only 1 of them had a real ShipBy. Grouping used to key
+    # purely on (customer, order_date), so all 19 merged into one group and
+    # the single ShipBy pinned the other 18's value to its date too.
+    orders = [make_order(f'SO-{i}', 'Prouds', date(2026, 8, 12), 1000) for i in range(18)]
+    orders.append(make_order('SO-PINNED', 'Prouds', date(2026, 8, 12), 500, ship_by=date(2026, 10, 5)))
+    groups = group_orders(orders, overrides={})
+    assert len(groups) == 2, 'the pinned order must not merge with its unpinned siblings'
+    pinned = next(g for g in groups if g.ship_by == date(2026, 10, 5))
+    unpinned = next(g for g in groups if g.ship_by is None)
+    assert pinned.order_numbers == ['SO-PINNED']
+    assert set(unpinned.order_numbers) == {f'SO-{i}' for i in range(18)}
+    assert unpinned.value_excl_gst == 18000
+
+
+def test_large_order_never_merges_into_a_combined_group():
+    # A $10k order shares a customer+date with two small orders -- it must
+    # not be folded into their combined group total, so its own value
+    # stays visible on its own line rather than buried in a group sum.
+    orders = [
+        make_order('SO-1', 'Acme', date(2026, 5, 1), 100),
+        make_order('SO-2', 'Acme', date(2026, 5, 1), 200),
+        make_order('SO-BIG', 'Acme', date(2026, 5, 1), 10000),
+    ]
+    groups = group_orders(orders, overrides={}, large_order_carveout_threshold=7500)
+    assert len(groups) == 2
+    big = next(g for g in groups if 'SO-BIG' in g.order_numbers)
+    small = next(g for g in groups if g is not big)
+    assert big.order_numbers == ['SO-BIG']
+    assert big.value_excl_gst == 10000
+    assert set(small.order_numbers) == {'SO-1', 'SO-2'}
+    assert small.value_excl_gst == 300
+
+
+def test_dispatch_date_override_takes_precedence_over_ship_by_and_is_a_hard_pin():
+    today = date(2026, 6, 1)
+    orders = [make_order('SO-1', 'A', date(2026, 5, 1), 1000, ship_by=date(2026, 6, 15))]
+    overrides = {'SO-1': {'dispatch_date_override': date(2026, 8, 1)}}
+    groups = group_orders(orders, overrides)
+    assert groups[0].ship_by == date(2026, 8, 1)  # override wins over the real ShipBy
+    # Enough same-day unpinned volume to blow past target many times over --
+    # the overridden date must still hold regardless.
+    for i in range(5):
+        orders.append(make_order(f'SO-fill-{i}', 'B', date(2026, 6, 1), 100000))
+    groups = group_orders(orders, overrides)
+    schedule, holding = schedule_groups(groups, today=today, monthly_target=220000)
+    forced = next(g for g in groups if 'SO-1' in g.order_numbers)
+    assert forced.assigned_month == '2026-08'
+    assert forced.scheduling_date == date(2026, 8, 1)
 
 
 if __name__ == '__main__':
