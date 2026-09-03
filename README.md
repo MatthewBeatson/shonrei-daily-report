@@ -5,12 +5,14 @@ Outlook email workflow. Same figures, same layout and color coding as the
 Excel dashboard, no email involved -- 6 management users sign in and see
 figures that refresh on a schedule or on demand.
 
-Reuses the **same Supabase project** as the Ordering Portal (JPL) repo
-(project ref `vwbbkkwzehkfhurhluza`) and the same Render account, but
-everything here lives in its own Postgres schema (`reporting`, not
-`public`) with its own, completely disjoint set of users and roles
-(`reporting.report_users`, not `public.users`/`user_store_roles`). Same
-Supabase Auth user pool, zero access overlap in either direction.
+Has its **own Supabase project** (project ref `zkwbapuclczezoxxtevk`) --
+this README used to claim it reused the same project as the Ordering
+Portal (JPL) repo (`vwbbkkwzehkfhurhluza`); that was stale/incorrect and
+was corrected on 2026-09-03. It does share the same Render account. The
+`reporting` schema convention (not `public`), its own disjoint set of
+users and roles (`reporting.report_users`, not `public.users`/
+`user_store_roles`), and the rest of this document still apply -- only
+the "which Supabase project" detail was wrong.
 
 ## How it's laid out
 
@@ -53,6 +55,42 @@ is what enforces who can see/edit what, not RLS, matching how
 ordering-portal's own backend already works). It also serves `frontend/`
 as static files, so there's exactly one URL for the 6 users to bookmark.
 
+## Monthly Dispatch Plan
+
+Automated replacement for the manually-maintained "<MONTH> ORDERS PLAN"
+Excel workbook. Every Monday morning (`.github/workflows/weekly-dispatch-plan.yml`,
+same shared-secret POST pattern as the hourly refresh) `refresh-service`
+pulls every currently-open Cin7 order (`dispatch_plan_data.py`), schedules
+it into weeks/months against the monthly sales target
+(`dispatch_plan_schedule.py` -- pure functions, unit-tested in
+`refresh-service/test_dispatch_plan_schedule.py`), renders it as an .xlsx
+(`dispatch_plan_xlsx.py`), and uploads it to Supabase Storage
+(`dispatch_plan_run.py`). The web app's "Monthly Dispatch Plan" panel
+signs a short-lived download URL against that bucket and lets an editor
+trigger a rebuild on demand or manage the manual grouping/hold overrides
+(`reporting.dispatch_plan_overrides` -- Cin7 has no field that reliably
+distinguishes "genuinely can't ship yet" from Shonrei's normal
+make-to-order/backorder flow, so that call stays manual, keyed by SO# so
+it survives every Monday's full rebuild).
+
+**One-time setup, in addition to the migration above:**
+
+1. Supabase dashboard -> **Storage** -> create a bucket named
+   `dispatch-plans`, **not public** (downloads go through signed URLs
+   only, minted server-side).
+2. Add `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` to
+   **shonrei-report-refresh**'s Render env (uploads the generated file)
+   and `SUPABASE_SERVICE_ROLE_KEY` to **shonrei-report-web**'s env (signs
+   the download URL) -- `render.yaml` already lists both, they just need
+   real values pasted in on Render same as every other `sync: false` var.
+   No new GitHub Actions secrets needed -- the weekly workflow reuses the
+   same `REFRESH_SERVICE_URL`/`REFRESH_SHARED_SECRET` the hourly one does.
+
+To confirm a Cin7 field's real name/behavior against live data (rather
+than assuming), see `scripts/dump_sample_sale.py` -- read-only, reads
+credentials the same way `scripts/print_local_credentials.py` does, and
+never sends anything through chat.
+
 ## Local dev
 
 ```bash
@@ -60,11 +98,17 @@ as static files, so there's exactly one URL for the 6 users to bookmark.
 python scripts/run_migration.py migrations/001_reporting_schema.sql
 python scripts/run_migration.py migrations/002_pin_auth.sql
 python scripts/run_migration.py migrations/003_fix_manual_inputs_trigger.sql
+python scripts/run_migration.py migrations/004_previous_workday_sales.sql
+python scripts/run_migration.py migrations/005_workday_sales_status.sql
+python scripts/run_migration.py migrations/006_dispatch_plan.sql
 
-# Backend (serves the frontend too)
+# Backend (serves the frontend too) -- reads the project ROOT .env
+# (backend/src/index.js points dotenv at ../../.env explicitly; a bare
+# `cd backend && npm start` would otherwise look for backend/.env, which
+# doesn't exist)
+cp .env.example .env   # fill in real values, from the project root
 cd backend
 npm install
-cp ../.env.example ../.env   # fill in real values
 npm start   # http://localhost:3000
 
 # Refresh service (separate terminal)
@@ -154,3 +198,10 @@ there's no admin UI for this yet.
   the business-hours window) -- add a check in
   `refresh-service/app.py:within_scheduled_window` if weekends should be
   skipped.
+- Monthly Dispatch Plan: no in-app way to browse past weeks' generated
+  workbooks (Storage only ever keeps the very latest -- each Monday's
+  upload uses a fresh dated filename, but nothing prunes or lists old
+  ones, and `dispatch_plan_current` only ever points at the newest). No
+  UI surfaces `dispatch_plan_log` yet either (`GET
+  /reporting/dispatch-plan/log` exists, nothing in the frontend calls it)
+  -- check that route or the Supabase table directly if a run fails.

@@ -1,0 +1,28 @@
+name: Weekly Monthly Dispatch Plan
+
+# Fires once, Monday morning Pacific/Auckland. GitHub Actions cron has no
+# timezone support, so the UTC time below is pinned to NZST (UTC+12):
+# Sunday 19:00 UTC = Monday 07:00 NZST. During NZDT (UTC+13, roughly late
+# Sep - early Apr) this lands at 08:00 NZDT instead -- same one-hour drift
+# the existing hourly-refresh.yml's business-hours window already lives
+# with, not worth a DST-aware cron expression for a once-a-week trigger.
+on:
+  schedule:
+    - cron: "0 19 * * 0"
+  workflow_dispatch: {} # lets you fire it manually from the Actions tab too
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /dispatch-plan/generate
+        run: |
+          curl -sS -X POST "${REFRESH_SERVICE_URL}/dispatch-plan/generate" \
+            -H "X-Refresh-Secret: ${REFRESH_SHARED_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            -w "\nHTTP %{http_code}\n" \
+            --fail-with-body
+        env:
+          REFRESH_SERVICE_URL: ${{ secrets.REFRESH_SERVICE_URL }}
+          REFRESH_SHARED_SECRET: ${{ secrets.REFRESH_SHARED_SECRET }}

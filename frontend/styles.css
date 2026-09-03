@@ -259,6 +259,16 @@ button {
 .lock-overlay h1 { color: var(--navy); font-size: 1.1rem; margin-bottom: 4px; }
 .lock-overlay p.sub { color: var(--gray); font-size: 0.85rem; margin-bottom: 4px; }
 
+/* ---------- Monthly Dispatch Plan ---------- */
+#dispatch-plan-section .btn-secondary,
+#dispatch-plan-section a.btn-secondary {
+  flex: none; text-decoration: none; text-align: center; cursor: pointer; font-size: 0.9rem;
+}
+.overrides-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.overrides-table th, .overrides-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.overrides-table td.override-delete { text-align: right; }
+.overrides-table button.link-danger { background: none; border: none; color: #b00020; cursor: pointer; font-size: 0.85rem; padding: 0; }
+
 .hidden { display: none !important; }
 
 @media (max-width: 480px) {

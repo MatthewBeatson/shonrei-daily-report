@@ -3,6 +3,7 @@ const path = require('path');
 const cors = require('cors');
 const reportingRouter = require('./routes/reporting');
 const authRouter = require('./routes/auth');
+const dispatchPlanRouter = require('./routes/dispatch-plan');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const FRONTEND_DIR = path.join(__dirname, '../../frontend');
@@ -29,6 +30,7 @@ function createApp() {
   });
 
   app.use('/reporting', reportingRouter);
+  app.use('/reporting/dispatch-plan', dispatchPlanRouter);
   app.use('/auth', authRouter);
 
   app.use(express.static(FRONTEND_DIR));
