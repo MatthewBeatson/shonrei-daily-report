@@ -1,6 +1,6 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<title>Shonrei Daily Management Summary</title>
+<title>Shonrei Monthly Dispatch Plan</title>
 <link rel="stylesheet" href="/styles.css" />
 <meta name="theme-color" content="#17365D" />
 <meta name="robots" content="noindex, nofollow" />
@@ -10,8 +10,8 @@
   <!-- ===================== LOGIN ===================== -->
   <div class="center-screen" id="view-login">
     <form class="card" id="login-form" autocomplete="on">
-      <h1>Shonrei Daily Management Summary</h1>
-      <p class="sub">Sign in to view today's figures.</p>
+      <h1>Shonrei Monthly Dispatch Plan</h1>
+      <p class="sub">Sign in to view the dispatch plan.</p>
       <label for="login-email">Email</label>
       <input type="email" id="login-email" name="email" autocomplete="username" required />
       <label for="login-password">Password</label>
@@ -54,11 +54,7 @@
   </div>
 
   <!-- Shown instead of view-set-password when the account has a verified
-       Supabase TOTP factor -- Supabase refuses to change a password on a
-       recovery session below AAL2 once MFA is enabled on the account
-       (this project's own PIN feature is separate from this; this is
-       Supabase's own 2FA, shared across every app on this Supabase
-       project, including the ordering portal). -->
+       Supabase TOTP factor -- see app.js's identical block for why. -->
   <div class="center-screen hidden" id="view-set-password-mfa">
     <div class="card">
       <h1>Re-verify your 2FA code</h1>
@@ -84,18 +80,15 @@
     </div>
   </div>
 
-  <!-- ===================== DASHBOARD ===================== -->
+  <!-- ===================== DASHBOARD (this page's main content) ===================== -->
   <div class="hidden" id="view-dashboard" style="display:flex; flex-direction:column; min-height:100vh;">
     <div class="topbar">
       <div>
-        <h1>SHONREI DAILY MANAGEMENT SUMMARY</h1>
-        <div class="as-of" id="as-of-text">As at —</div>
-        <div class="as-of" id="auto-refresh-text">Auto-updates hourly, 7am&ndash;7pm NZT &middot; Refresh Now for the latest anytime</div>
+        <h1>MONTHLY DISPATCH PLAN</h1>
+        <div class="as-of" id="dispatch-plan-status">Not generated yet</div>
       </div>
       <div class="right">
-        <span class="status-badge ok" id="overall-status-badge">—</span>
-        <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
-        <a class="btn-link" href="/dispatch-plan.html" style="color:#fff; opacity:0.8;">Dispatch Plan</a>
+        <a class="btn-link" href="/" style="color:#fff; opacity:0.8;">Daily Summary</a>
         <button class="btn-link" id="remember-toggle-btn" style="color:#fff; opacity:0.8;">PIN sign-in: Off</button>
         <button class="btn-link" id="lock-now-btn" style="color:#fff; opacity:0.8;" title="Lock now">🔒</button>
         <button class="btn-link" id="sign-out-btn" style="color:#fff; opacity:0.8;">Sign out</button>
@@ -103,68 +96,31 @@
     </div>
 
     <div class="content">
-      <div class="error-text" id="dashboard-error"></div>
+      <div class="report-section" id="dispatch-plan-section">
+        <div style="display:flex; gap:10px; margin:10px 0; flex-wrap:wrap;">
+          <a class="btn-secondary hidden" id="dispatch-plan-download" href="#" target="_blank" rel="noopener">Download workbook</a>
+          <button class="btn-secondary hidden" id="dispatch-plan-generate">Generate now</button>
+        </div>
+        <div class="error-text" id="dispatch-plan-error"></div>
 
-      <!-- CASH POSITION -->
-      <div class="report-section">
-        <div class="section-header">CASH POSITION</div>
-        <div id="row-bank"></div>
-        <div id="row-net-short-term"></div>
-      </div>
-
-      <!-- SALES -->
-      <div class="report-section">
-        <div class="section-header">SALES</div>
-        <div id="row-sales-mtd"></div>
-        <div id="row-sales-workday"></div>
-        <div id="row-sales-prev"></div>
-        <div id="row-projected"></div>
-        <div id="row-breakeven"></div>
-        <div id="row-variance"></div>
-        <div id="row-sales-on-hand"></div>
-        <div id="row-remaining"></div>
-      </div>
-
-      <!-- WORKING CAPITAL -->
-      <div class="report-section">
-        <div class="section-header">WORKING CAPITAL</div>
-        <div id="row-debtors-total"></div>
-        <div id="row-debtors-not-due"></div>
-        <div id="row-debtors-overdue"></div>
-        <div id="row-creditors-total"></div>
-        <div id="row-creditors-nzd"></div>
-        <div id="row-wc"></div>
-        <div id="row-wc-ratio"></div>
-      </div>
-
-      <div class="report-section" id="commentary-section">
-        <div class="section-header">MANAGEMENT COMMENTARY</div>
-        <div id="row-commentary"></div>
-      </div>
-
-      <div class="legend">
-        <span><span class="dot" style="background:var(--green)"></span> Imported data</span>
-        <span><span class="dot" style="background:var(--blue)"></span> Management input</span>
-        <span><span class="dot" style="background:var(--gray)"></span> Calculated</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ===================== EDIT MANUAL INPUTS MODAL ===================== -->
-  <div class="modal-backdrop hidden" id="edit-modal-backdrop">
-    <div class="modal">
-      <h2>Edit management inputs</h2>
-      <p class="sub" style="margin:0 0 6px; font-size:0.8rem; color:var(--gray);">Visible to everyone; only you and a couple of others can change these.</p>
-      <label for="edit-projected">Projected sales — current month</label>
-      <input type="text" inputmode="decimal" id="edit-projected" />
-      <label for="edit-breakeven">Monthly breakeven</label>
-      <input type="text" inputmode="decimal" id="edit-breakeven" />
-      <label for="edit-commentary">Management commentary</label>
-      <textarea id="edit-commentary" rows="4" style="width:100%; padding:11px 12px; border:1px solid var(--border); border-radius:8px; font-family:inherit; font-size:0.95rem; background:var(--bg); color:var(--text);"></textarea>
-      <div class="error-text" id="edit-error"></div>
-      <div class="actions">
-        <button class="btn-secondary" id="edit-cancel">Cancel</button>
-        <button class="btn-primary modal-save" id="edit-save">Save</button>
+        <div id="dispatch-plan-overrides-wrap" class="hidden" style="margin-top:14px;">
+          <p class="sub" style="margin:0 0 8px;">Overrides -- relabel/split a customer's auto-grouped orders, force a specific dispatch date, or hold an SO# out of scheduling until it's flagged fulfillable again.</p>
+          <table class="overrides-table" id="dispatch-plan-overrides-table">
+            <thead><tr><th>SO#</th><th>Group label override</th><th>Forced dispatch date</th><th>Hold</th><th>Note</th><th></th></tr></thead>
+            <tbody id="dispatch-plan-overrides-body"></tbody>
+          </table>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+            <input type="text" id="override-so" placeholder="SO#" style="width:110px;" />
+            <input type="text" id="override-label" placeholder="Group label override (optional)" style="width:220px;" />
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem;">
+              Force date <input type="date" id="override-date" />
+            </label>
+            <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" id="override-hold" /> Hold</label>
+            <input type="text" id="override-note" placeholder="Note (optional)" style="width:200px;" />
+            <button class="btn-secondary" id="override-save">Save override</button>
+          </div>
+          <p class="sub" style="margin:6px 0 0; font-size:0.78rem;">A forced dispatch date always wins over Cin7's own promised ship date, and is never moved by target pacing -- the order MUST land in the week containing it.</p>
+        </div>
       </div>
     </div>
   </div>
@@ -197,4 +153,4 @@
 </div>
 
 <script src="/config.js"></script>
-<script src="/app.js"></script>
+<script src="/dispatch-plan.js"></script>
