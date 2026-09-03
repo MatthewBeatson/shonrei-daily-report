@@ -19,7 +19,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dispatch_plan_schedule import week_ranges_for_month, month_from_key
+from dispatch_plan_schedule import Group, week_ranges_for_month, month_from_key
 
 CURRENCY_FMT = '_-"$"* #,##0_-;\\-"$"* #,##0_-;_-"$"* "-"??_-;_-@_-'
 DATE_FMT = '[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy'
@@ -52,6 +52,39 @@ def _date_range_label(start: date, end: date) -> str:
     return f'{start.day}-{end.day} {month_name}'
 
 
+def _bunch_small_orders(groups: list, threshold: float) -> list:
+    """Any group that is (a) a single, never-merged-with-anything-else
+    order and (b) worth less than `threshold` gets pulled out and replaced
+    with one combined synthetic group per week, labeled "Various smaller
+    orders" -- Matthew's call 2026-09-04, replacing an old $2,000 manual-
+    workbook convention with a configurable threshold (default $1,000).
+    A group that's already multiple orders combined (e.g. a customer+date
+    auto-group) stays on its own line even if its combined total is under
+    the threshold -- only genuinely standalone small orders bunch."""
+    small = [g for g in groups if len(g.order_numbers) == 1 and g.value_excl_gst < threshold]
+    if not small:
+        return groups
+    small_keys = {g.key for g in small}
+    kept = [g for g in groups if g.key not in small_keys]
+    customers = ', '.join(dict.fromkeys(g.customer for g in small))  # de-duplicated, order preserved
+    order_numbers = [n for g in small for n in g.order_numbers]
+    bunched = Group(
+        key='bunched:various-smaller-orders',
+        customer='Various smaller orders',
+        label=customers,
+        order_numbers=order_numbers,
+        order_date=min((g.order_date for g in small if g.order_date), default=None),
+        value_excl_gst=sum(g.value_excl_gst for g in small),
+    )
+    # Displayed date = earliest of the bunched orders' own scheduling dates,
+    # so the row still sorts sensibly among the week's other rows rather
+    # than needing special-cased placement.
+    dated = [g.scheduling_date for g in small if g.scheduling_date]
+    bunched.scheduling_date = min(dated) if dated else None
+    kept.append(bunched)
+    return kept
+
+
 def _write_month_sheet(
     ws: Worksheet,
     month_key: str,
@@ -60,6 +93,7 @@ def _write_month_sheet(
     invoiced_to_date: float,
     breakeven: float | None,
     as_at: date,
+    small_order_threshold: float = 1000.0,
 ) -> dict:
     """Returns the address (within this sheet) of the cells the Overview
     sheet needs to reference: target, invoiced, total_projected, breakeven."""
@@ -102,7 +136,8 @@ def _write_month_sheet(
         row += 1
 
         first_order_row = row
-        for g in sorted(weeks[week_no], key=lambda g: (g.scheduling_date, g.customer)):
+        week_groups = _bunch_small_orders(weeks[week_no], small_order_threshold)
+        for g in sorted(week_groups, key=lambda g: (g.scheduling_date, g.customer)):
             ws.cell(row=row, column=2, value=g.customer)
             ws.cell(row=row, column=3, value=g.label)
             ws.cell(row=row, column=4, value=', '.join(g.order_numbers))
@@ -218,6 +253,7 @@ def build_workbook(
     invoiced_to_date_by_month: dict[str, float],
     breakeven: float | None,
     as_at: date,
+    small_order_threshold: float = 1000.0,
 ) -> Workbook:
     """schedule: {month_key: {week_no: [Group,...]}} from dispatch_plan_schedule.schedule_groups().
     invoiced_to_date_by_month: only the real current calendar month should
@@ -237,6 +273,7 @@ def build_workbook(
         refs = _write_month_sheet(
             ws, month_key, schedule[month_key], monthly_target,
             invoiced_to_date_by_month.get(month_key, 0.0), breakeven, as_at,
+            small_order_threshold,
         )
         month_refs.append((month_key, refs))
 
