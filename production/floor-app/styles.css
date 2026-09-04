@@ -1,0 +1,135 @@
+/* Same palette convention as ../../frontend/styles.css, tuned for a
+   tablet held at arm's length on a production line: big touch targets,
+   high contrast, minimal text. */
+:root {
+  --navy: #17365D;
+  --green: #1a7f37;
+  --blue: #1657cf;
+  --gray: #667085;
+  --red: #C00000;
+  --amber: #b45309;
+  --text: #253746;
+  --border: #E3E8EF;
+  --bg: #ffffff;
+  --card-bg: #F7F9FC;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #E7ECF3;
+    --border: #2c3a4a;
+    --bg: #121a24;
+    --card-bg: #17212c;
+    --green: #4ade80;
+    --blue: #7cb3ff;
+    --gray: #93a3b5;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.screen {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
+header .scan-again {
+  font-size: 0.85rem;
+  color: var(--blue);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: none;
+}
+
+.scan-card {
+  border: 2px dashed var(--border);
+  border-radius: 16px;
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--gray);
+}
+.scan-card .icon { font-size: 2.5rem; display: block; margin-bottom: 12px; }
+.scan-card button {
+  margin-top: 16px;
+  font-size: 1rem;
+  padding: 14px 24px;
+  border-radius: 10px;
+  border: none;
+  background: var(--navy);
+  color: #fff;
+}
+
+.run-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 20px;
+}
+.run-card .product { font-size: 1.3rem; font-weight: 600; }
+.run-card .planned { color: var(--gray); font-size: 0.95rem; margin-top: 4px; }
+
+.qty-block { text-align: center; margin: 8px 0; }
+.qty-block label { display: block; font-size: 0.85rem; color: var(--gray); margin-bottom: 8px; }
+.qty-stepper { display: flex; align-items: center; justify-content: center; gap: 16px; }
+.qty-stepper button {
+  width: 56px; height: 56px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg);
+  font-size: 1.6rem; color: var(--navy);
+}
+.qty-stepper .value { font-size: 2.4rem; font-weight: 700; min-width: 90px; }
+
+.reject-toggle {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--blue);
+  background: none;
+  border: none;
+  padding: 6px;
+}
+.reject-block { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.reject-block input {
+  width: 80px; font-size: 1.2rem; text-align: center;
+  padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text);
+}
+
+.confirm-btn {
+  font-size: 1.15rem;
+  font-weight: 600;
+  padding: 18px;
+  border-radius: 14px;
+  border: none;
+  background: var(--green);
+  color: #fff;
+}
+.confirm-btn.as-planned { background: var(--navy); }
+
+.done-card {
+  text-align: center;
+  padding: 48px 20px;
+}
+.done-card .icon { font-size: 3rem; color: var(--green); }
+.done-card p { color: var(--gray); }
+
+[hidden] { display: none !important; }

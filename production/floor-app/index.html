@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Shonrei Production - Report Run</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="screen">
+    <header>
+      <h1>Shonrei Production</h1>
+      <button class="scan-again" id="rescanBtn" hidden>Scan another</button>
+    </header>
+
+    <!-- Step 1: scan the run's QR code (printed on the day's schedule sheet) -->
+    <section class="scan-card" id="scanStep">
+      <span class="icon">&#128247;</span>
+      No run scanned yet.
+      <div>
+        <button id="scanBtn">Scan run QR code</button>
+      </div>
+    </section>
+
+    <!-- Step 2: confirm/adjust the actual quantity made -->
+    <section class="run-card" id="confirmStep" hidden>
+      <div class="product" id="productName"></div>
+      <div class="planned" id="plannedLine"></div>
+
+      <div class="qty-block">
+        <label>Actual quantity made</label>
+        <div class="qty-stepper">
+          <button id="qtyDown" aria-label="decrease">&minus;</button>
+          <span class="value" id="qtyValue">0</span>
+          <button id="qtyUp" aria-label="increase">+</button>
+        </div>
+      </div>
+
+      <button class="reject-toggle" id="rejectToggle">+ record rejects/scrap</button>
+      <div class="reject-block" id="rejectBlock" hidden>
+        <span>Rejected:</span>
+        <input type="number" id="rejectValue" min="0" value="0">
+      </div>
+
+      <button class="confirm-btn as-planned" id="confirmPlannedBtn">
+        Made as planned &mdash; confirm
+      </button>
+      <button class="confirm-btn" id="confirmActualBtn" hidden>
+        Submit
+      </button>
+    </section>
+
+    <!-- Step 3: done -->
+    <section class="done-card" id="doneStep" hidden>
+      <div class="icon">&#10003;</div>
+      <p id="doneMessage">Reported. Cin7 will be updated automatically.</p>
+      <button id="doneRescanBtn">Report another run</button>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
