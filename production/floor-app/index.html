@@ -10,15 +10,21 @@
   <div class="screen">
     <header>
       <h1>Shonrei Production</h1>
-      <button class="scan-again" id="rescanBtn" hidden>Scan another</button>
+      <button class="scan-again" id="rescanBtn" hidden>Pick another run</button>
     </header>
 
-    <!-- Step 1: scan the run's QR code (printed on the day's schedule sheet) -->
+    <!-- Step 1: pick today's open run. QR-scan-to-select is the intended
+         end state (see production/README.md) but isn't wired up for this
+         first concept -- picking from a short real list needs no camera
+         integration and still proves the flow against real data. -->
     <section class="scan-card" id="scanStep">
-      <span class="icon">&#128247;</span>
-      No run scanned yet.
+      <div id="runListEmpty">
+        <span class="icon">&#128203;</span>
+        No open runs right now.
+      </div>
+      <div id="runList" hidden></div>
       <div>
-        <button id="scanBtn">Scan run QR code</button>
+        <button id="refreshBtn">Refresh list</button>
       </div>
     </section>
 
@@ -58,6 +64,7 @@
     </section>
   </div>
 
+  <script src="/production/floor-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

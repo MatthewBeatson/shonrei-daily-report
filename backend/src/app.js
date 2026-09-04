@@ -4,9 +4,11 @@ const cors = require('cors');
 const reportingRouter = require('./routes/reporting');
 const authRouter = require('./routes/auth');
 const dispatchPlanRouter = require('./routes/dispatch-plan');
+const productionRouter = require('./routes/production');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const FRONTEND_DIR = path.join(__dirname, '../../frontend');
+const FLOOR_APP_DIR = path.join(__dirname, '../../production/floor-app');
 
 function createApp() {
   const app = express();
@@ -32,6 +34,12 @@ function createApp() {
   app.use('/reporting', reportingRouter);
   app.use('/reporting/dispatch-plan', dispatchPlanRouter);
   app.use('/auth', authRouter);
+  app.use('/production', productionRouter);
+
+  // Floor app: a separate static site (no build step, same as
+  // frontend/) served under its own path so a shop tablet bookmarks
+  // /production-floor/ instead of the management report.
+  app.use('/production-floor', express.static(FLOOR_APP_DIR));
 
   app.use(express.static(FRONTEND_DIR));
 

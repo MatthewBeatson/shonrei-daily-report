@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify
 from daily_refresh_supabase import get_conn, run_refresh, load_settings
 from dispatch_plan_run import run_dispatch_plan
+from production_plan import ProductionPlanError, run_production_plan
 
 app = Flask(__name__)
 
@@ -143,6 +144,32 @@ def dispatch_plan_generate():
     thread = threading.Thread(target=_run_dispatch_plan_in_background, args=(triggered_by,), daemon=True)
     thread.start()
     return jsonify({'status': 'started'}), 202
+
+
+@app.post('/production/plan')
+def production_plan():
+    """Explode a demand list into a build plan and stage it in the
+    `production` schema. Unlike /refresh and /dispatch-plan/generate this
+    runs synchronously and returns the plan in the response -- BOM
+    explosion is fast (pure in-memory recursion, see bom_explode.py), no
+    need for the background-thread + poll pattern those use for the much
+    slower Xero/Cin7 pulls.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        try:
+            plan = run_production_plan(conn, payload)
+        except ProductionPlanError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify(plan), 200
 
 
 if __name__ == '__main__':

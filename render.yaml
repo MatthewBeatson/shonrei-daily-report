@@ -37,6 +37,10 @@ services:
         sync: false
       - key: REFRESH_SHARED_SECRET
         sync: false
+      # Gates /production/run-actuals and /production/runs/open -- the
+      # floor app sends this, not a Supabase login. See production/README.md.
+      - key: FLOOR_APP_SHARED_SECRET
+        sync: false
 
   # Always-on Python service that does the actual Xero/Cin7 pulls. Never
   # exposed to end users -- only shonrei-report-web (on-demand clicks) and

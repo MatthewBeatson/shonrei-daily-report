@@ -190,6 +190,17 @@ there's no admin UI for this yet.
   scheduled job needs somewhere to persist the new value between runs --
   that table isn't reachable except via the two trusted backends.
 
+## Production MRP / Cin7 assembly automation (prototype)
+
+`production/` is a live-but-early prototype tackling two separate Cin7
+Core pain points: automating the Create/Authorise/Allocate/Complete
+assembly lifecycle across multi-level BOMs, and capturing production
+*inputs* from busy floor staff without adding friction to their day. It
+reuses this app's own Supabase project and Render account rather than
+standing up anything new -- see `production/README.md` for the full
+writeup, current status, and what's still deliberately deferred (real
+Cin7 writes, camera-based scanning).
+
 ## Not yet built (known gaps)
 
 - No admin UI for managing `reporting.report_users`/`reporting.settings`

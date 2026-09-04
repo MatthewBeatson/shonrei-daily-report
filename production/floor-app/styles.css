@@ -132,4 +132,20 @@ header .scan-again {
 .done-card .icon { font-size: 3rem; color: var(--green); }
 .done-card p { color: var(--gray); }
 
+.run-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 16px;
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 1rem;
+}
+.run-list-item .qty { color: var(--gray); font-size: 0.9rem; }
+
 [hidden] { display: none !important; }

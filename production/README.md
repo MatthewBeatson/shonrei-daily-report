@@ -87,16 +87,59 @@ That entry writes straight to `production.run_actuals`, which the
 orchestrator then pushes into Cin7 as the Complete call -- so the floor
 never touches Cin7, and admin never re-keys anything.
 
-## Not yet built
+## Live concept -- what actually runs today
 
-- `backend/` API routes to serve the floor app and receive its submissions
-  (would live alongside the existing reporting `backend`, new
-  `production` routes, same auth pattern).
-- Real Cin7 endpoint wiring in `cin7_client.py` (currently documents the
-  calls needed and stubs them -- see `scripts/dump_sample_sale.py` in this
-  repo for the pattern of confirming a live Cin7 field/endpoint before
-  coding against it).
-- The `production` schema migration is written but not run against any
-  Supabase project yet.
+To get something real running with minimal new setup, the concept
+deliberately reuses this repo's existing Supabase project and Render
+account rather than standing up anything new, and defers the riskiest
+piece (writing to live Cin7 inventory) until the rest is proven:
+
+- `migrations/007_production_schema.sql` runs against the same Supabase
+  project as `reporting` (new `production` schema, no new project).
+- `backend/src/routes/production.js` is mounted on the existing Node
+  API: `GET/POST /production/*` for the admin/planner side (same
+  Supabase-login auth as the rest of the report) and
+  `GET /production/runs/open` + `POST /production/run-actuals` for the
+  floor app, gated by a separate `FLOOR_APP_SHARED_SECRET` header
+  instead of a per-user login -- there's no login system on a shared
+  shop tablet, so this is abuse-deterrence on a public URL, not real
+  auth (same reasoning as `SUPABASE_ANON_KEY` being safe to serve
+  publicly).
+- `refresh-service/production_plan.py` adds `POST /production/plan`
+  to the existing refresh-service, reusing `bom_explode.py` to turn a
+  demand list into a staged plan.
+- `floor-app/` now talks to these real endpoints instead of mock data --
+  it lists real open runs (`GET /production/runs/open`) instead of
+  scanning a QR code (camera integration is still deferred, see below),
+  and submitting reports a real actual quantity that flips the run to
+  `completed` in the database.
+- **Deliberately not wired yet: real Cin7 calls.** Demand/BOM/on-hand
+  figures for `/production/plan` come in on the request body rather
+  than being pulled from Cin7 automatically, and `run-actuals` marks a
+  run `completed` in our own database without calling Cin7's
+  Allocate/Complete endpoints. This proves the whole flow (explosion ->
+  staged runs -> floor input -> completion) against a real database
+  with zero risk to live Cin7 inventory while it's still being
+  validated. `scripts/dump_sample_bom.py` is the next step when ready --
+  same pattern as `scripts/dump_sample_sale.py`, run locally with real
+  Cin7 credentials to confirm the real BOM/availability endpoint shapes
+  before wiring them into `cin7_client.py` for real.
+
+**To try it locally:** run `python scripts/run_migration.py
+migrations/007_production_schema.sql` against your `.env`, set
+`FLOOR_APP_SHARED_SECRET` in both `backend/.env` and wherever
+`refresh-service` runs, start both services as usual, then open
+`/production-floor/` for the floor app or `POST /production/plan` (with
+a report-admin's bearer token) with a demand/BOM body to stage a plan.
+
+## Still not built
+
+- QR-scan-to-select on the floor app (currently: pick from a short real
+  list of open runs -- functionally equivalent for a small number of
+  concurrent runs, less setup than camera integration).
+- Real Cin7 BOM/availability pull and the actual Create/Authorise/
+  Allocate/Complete API calls (see above).
+- An admin UI for `/production/plan` -- for now it's a raw API call; the
+  6-user report app would be the natural place to add a page for it.
 - Photo/OCR fallback for the rare case even the one-tap floor app is too
   much friction.
