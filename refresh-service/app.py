@@ -22,7 +22,7 @@ from __future__ import annotations
 import os, threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 from daily_refresh_supabase import get_conn, run_refresh, load_settings
 from dispatch_plan_run import run_dispatch_plan
 from production_plan import ProductionPlanError, run_production_plan
@@ -30,6 +30,8 @@ from backorder_targets import sync_targets, apply_batch_actual
 from batch_staging import stage_batches_for_target
 from dry_run_cin7 import DryRunCin7Client
 from stocktake import StocktakeError, record_count, apply_adjustment
+from warehouse import WarehouseError, record_putaway_scan, set_home_location
+from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 
 app = Flask(__name__)
 
@@ -314,6 +316,127 @@ def stocktake_apply_adjustment(count_id):
         conn.close()
 
     return jsonify(result), 200
+
+
+@app.post('/warehouse/putaway-scans')
+def warehouse_putaway_scan():
+    """Body: {"sku", "scanned_location_code", "scanned_by"}. Records a
+    putaway/relocate scan and reports whether it matched the SKU's
+    designated home location -- see warehouse.py / putaway.py.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    sku = payload.get('sku')
+    scanned_location_code = payload.get('scanned_location_code')
+    if not sku or not scanned_location_code:
+        return jsonify({'error': 'sku and scanned_location_code are required'}), 400
+
+    conn = get_conn()
+    try:
+        result = record_putaway_scan(conn, sku, scanned_location_code, payload.get('scanned_by'))
+    finally:
+        conn.close()
+
+    return jsonify(result), 201
+
+
+@app.put('/warehouse/sku-locations/<path:sku>')
+def warehouse_set_home_location(sku):
+    """Body: {"location_code"}. Assigns (or reassigns) a SKU's home
+    location -- what a putaway scan is checked against.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    location_code = payload.get('location_code')
+    if not location_code:
+        return jsonify({'error': 'location_code is required'}), 400
+
+    conn = get_conn()
+    try:
+        try:
+            result = set_home_location(conn, sku, location_code)
+        except WarehouseError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify(result), 200
+
+
+def _zpl_response(zpl: str, filename: str) -> Response:
+    return Response(
+        zpl, mimetype='text/plain',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get('/labels/sku/<path:sku>')
+def label_sku(sku):
+    """Same barcode payload (the literal SKU text) whether this label
+    ends up on a bin/location label or stuck straight onto the product --
+    see production/planner/labels.py.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    zpl = sku_label_zpl(sku, description=request.args.get('description'))
+    return _zpl_response(zpl, f'sku-{sku}.zpl')
+
+
+@app.get('/labels/location/<path:location_code>')
+def label_location(location_code):
+    """Two independent barcodes on one label: the location's own fixed
+    code, and (if assigned) the SKU currently designated to live there --
+    reused verbatim from label_sku, not a new code."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select sl.sku from warehouse.sku_locations sl
+                   join warehouse.locations l on l.id = sl.location_id
+                   where l.code = %s""",
+                (location_code,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    current_sku = row[0] if row else None
+
+    zpl = location_label_zpl(location_code, current_sku=current_sku)
+    return _zpl_response(zpl, f'location-{location_code}.zpl')
+
+
+@app.get('/labels/batch/<batch_id>')
+def label_batch(batch_id):
+    """Batch sticker -- the direct fix for a production run having no
+    physical identifier as it moves through the factory."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "select batch_code, sku, qty_planned, priority_rank from production.production_batches "
+                "b join production.targets t on t.id = b.target_id where b.id = %s",
+                (batch_id,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return jsonify({'error': 'No such batch'}), 404
+    batch_code, sku, qty_planned, priority_rank = row
+
+    zpl = batch_label_zpl(batch_code, sku, float(qty_planned), priority_rank)
+    return _zpl_response(zpl, f'batch-{batch_code}.zpl')
 
 
 if __name__ == '__main__':

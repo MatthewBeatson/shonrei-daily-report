@@ -205,4 +205,21 @@ header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
 }
 .run-list-item .qty { color: var(--gray); font-size: 0.9rem; }
 
+.print-label-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--navy);
+  font-size: 0.9rem;
+}
+
+.pa-result-icon { font-size: 3rem; text-align: center; }
+.pa-result-icon.match { color: var(--green); }
+.pa-result-icon.mismatch { color: var(--red); }
+.pa-result-icon.unknown { color: var(--amber); }
+.pa-result-message { text-align: center; font-size: 1.05rem; margin-top: 8px; }
+
 [hidden] { display: none !important; }

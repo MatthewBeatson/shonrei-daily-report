@@ -22,16 +22,30 @@ function requireFloorSecret(req, res, next) {
   next();
 }
 
-async function callRefreshService(path, body) {
+// Batch labels are printed from both the floor app (X-Floor-Secret) and
+// the admin screen (Supabase bearer token) -- accept either rather than
+// duplicating the route.
+function requireFloorOrReportAuth(req, res, next) {
+  const secret = process.env.FLOOR_APP_SHARED_SECRET;
+  if (secret && req.headers['x-floor-secret'] === secret) return next();
+  return requireReportAuth(req, res, next);
+}
+
+function refreshServiceConfig() {
   const refreshUrl = process.env.REFRESH_SERVICE_URL;
   const sharedSecret = process.env.REFRESH_SHARED_SECRET;
   if (!refreshUrl || !sharedSecret) {
     throw new ApiError(500, 'Refresh service is not configured (REFRESH_SERVICE_URL / REFRESH_SHARED_SECRET)');
   }
+  return { refreshUrl, sharedSecret };
+}
+
+async function callRefreshService(path, body, method = 'POST') {
+  const { refreshUrl, sharedSecret } = refreshServiceConfig();
   let response;
   try {
     response = await fetch(`${refreshUrl}${path}`, {
-      method: 'POST',
+      method,
       headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
       body: JSON.stringify(body || {}),
     });
@@ -47,6 +61,29 @@ async function callRefreshService(path, body) {
     throw new ApiError(response.status, data.error || 'Request failed');
   }
   return data;
+}
+
+// Streams a ZPL label file back from the refresh service's /labels/*
+// routes -- those return text/plain + Content-Disposition, not JSON, so
+// this proxies the response as-is rather than going through
+// callRefreshService's JSON handling.
+async function streamRefreshServiceFile(path, res) {
+  const { refreshUrl, sharedSecret } = refreshServiceConfig();
+  let response;
+  try {
+    response = await fetch(`${refreshUrl}${path}`, { headers: { 'X-Refresh-Secret': sharedSecret } });
+  } catch (err) {
+    throw new ApiError(502, "Couldn't reach the refresh service -- it may be waking up. Try again in a moment.");
+  }
+  if (!response.ok) {
+    const contentType = response.headers.get('content-type') || '';
+    const errBody = contentType.includes('application/json') ? await response.json() : null;
+    throw new ApiError(response.status, errBody?.error || 'Request failed');
+  }
+  res.set('Content-Type', response.headers.get('content-type') || 'text/plain');
+  const disposition = response.headers.get('content-disposition');
+  if (disposition) res.set('Content-Disposition', disposition);
+  res.send(Buffer.from(await response.arrayBuffer()));
 }
 
 // Public config for the static floor-app, same pattern as the main
@@ -272,6 +309,83 @@ router.post('/stocktake/counts/:countId/adjust', requireEdit, asyncHandler(async
     note: (req.body || {}).note || null,
   });
   res.status(200).json(data);
+}));
+
+// -- Warehouse locations / putaway -- the "product placed anywhere" fix,
+//    see production/README.md "Labels & warehouse locations". ---------
+
+// Floor: scan SKU + scan/enter the bin's location code, get told whether
+// it matches that SKU's designated home. Recorded either way.
+router.post('/warehouse/putaway-scans', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { sku, scanned_location_code, scanned_by } = req.body || {};
+  if (!sku || !scanned_location_code) {
+    throw new ApiError(400, 'sku and scanned_location_code are required');
+  }
+  const data = await callRefreshService('/warehouse/putaway-scans', { sku, scanned_location_code, scanned_by });
+  res.status(201).json(data);
+}));
+
+// Admin: locations list/create, SKU-to-home-location assignment, and the
+// putaway scan log (mismatches are the point of reviewing this).
+router.get('/warehouse/locations', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select l.id, l.code, l.description, l.created_at, sl.sku as current_sku
+     from warehouse.locations l
+     left join warehouse.sku_locations sl on sl.location_id = l.id
+     order by l.code`
+  );
+  res.json({ locations: rows });
+}));
+
+router.post('/warehouse/locations', requireEdit, asyncHandler(async (req, res) => {
+  const { code, description } = req.body || {};
+  if (!code) throw new ApiError(400, 'code is required');
+  const { rows } = await pool.query(
+    `insert into warehouse.locations (code, description) values ($1, $2)
+     on conflict (code) do update set description = excluded.description
+     returning *`,
+    [code, description || null]
+  );
+  res.status(201).json({ location: rows[0] });
+}));
+
+router.put('/warehouse/sku-locations/:sku', requireEdit, asyncHandler(async (req, res) => {
+  const { location_code } = req.body || {};
+  if (!location_code) throw new ApiError(400, 'location_code is required');
+  const data = await callRefreshService(
+    `/warehouse/sku-locations/${encodeURIComponent(req.params.sku)}`,
+    { location_code }, 'PUT'
+  );
+  res.status(200).json(data);
+}));
+
+router.get('/warehouse/putaway-scans', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select id, sku, scanned_location_code, matched, scanned_by, scanned_at,
+            (select code from warehouse.locations where id = expected_location_id) as expected_location_code
+     from warehouse.putaway_scans order by scanned_at desc limit 200`
+  );
+  res.json({ scans: rows });
+}));
+
+// -- Labels -- ZPL, proxied from refresh-service (see production/planner/
+//    labels.py). Same SKU barcode reused across the location label and
+//    the product's own label; a separate barcode for the location itself.
+
+router.get('/labels/sku/:sku', requireReportAuth, asyncHandler(async (req, res) => {
+  const qs = req.query.description ? `?description=${encodeURIComponent(req.query.description)}` : '';
+  await streamRefreshServiceFile(`/labels/sku/${encodeURIComponent(req.params.sku)}${qs}`, res);
+}));
+
+router.get('/labels/location/:code', requireReportAuth, asyncHandler(async (req, res) => {
+  await streamRefreshServiceFile(`/labels/location/${encodeURIComponent(req.params.code)}`, res);
+}));
+
+// Batch labels are also useful straight from the floor once a batch's
+// been picked -- gated by the floor secret like the rest of that flow,
+// not the admin login.
+router.get('/labels/batch/:batchId', requireFloorOrReportAuth, asyncHandler(async (req, res) => {
+  await streamRefreshServiceFile(`/labels/batch/${encodeURIComponent(req.params.batchId)}`, res);
 }));
 
 module.exports = router;

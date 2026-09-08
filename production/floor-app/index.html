@@ -15,6 +15,7 @@
     <nav class="tab-bar" id="tabBar">
       <button class="tab-btn active" id="tabBtnBatches" data-tab="batches">Batches</button>
       <button class="tab-btn" id="tabBtnStocktake" data-tab="stocktake">Stocktake</button>
+      <button class="tab-btn" id="tabBtnPutaway" data-tab="putaway">Putaway</button>
     </nav>
 
     <!-- ===================== BATCHES TAB ===================== -->
@@ -72,6 +73,7 @@
         <button class="confirm-btn" id="confirmActualBtn" hidden>
           Submit
         </button>
+        <button class="print-label-btn" id="printBatchLabelBtn">Print batch label</button>
       </section>
 
       <!-- Step 3: done -->
@@ -132,6 +134,45 @@
         <div class="icon">&#10003;</div>
         <p id="stDoneMessage"></p>
         <button id="stDoneAgainBtn">Count another</button>
+      </section>
+    </div>
+
+    <!-- ===================== PUTAWAY TAB ===================== -->
+    <!-- The fix for "product placed anywhere": scan what you're putting
+         away, then scan the bin's own location label -- two separate
+         barcodes, see production/README.md. Told immediately whether
+         they match. -->
+    <div class="tab-panel" id="tabPutaway" hidden>
+      <div class="tab-panel-header">
+        <button class="scan-again" id="paAgainBtn" hidden>Scan another</button>
+      </div>
+
+      <section class="scan-card" id="paSkuStep">
+        <div class="scan-input-row">
+          <label for="paSkuInput">1. Scan or enter product SKU</label>
+          <input type="text" id="paSkuInput" inputmode="text" autocomplete="off"
+                 autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+        </div>
+        <div>
+          <button id="paSkuNextBtn">Next</button>
+        </div>
+      </section>
+
+      <section class="scan-card" id="paLocationStep" hidden>
+        <div class="product" id="paSkuLine" style="margin-bottom:10px;"></div>
+        <div class="scan-input-row">
+          <label for="paLocationInput">2. Scan or enter the bin's location code</label>
+          <input type="text" id="paLocationInput" inputmode="text" autocomplete="off"
+                 autocapitalize="characters" placeholder="e.g. A-03-02">
+        </div>
+        <div>
+          <button id="paLocationSubmitBtn">Confirm placement</button>
+        </div>
+      </section>
+
+      <section class="run-card" id="paResultStep" hidden>
+        <div id="paResultIcon" class="pa-result-icon"></div>
+        <p id="paResultMessage" class="pa-result-message"></p>
       </section>
     </div>
   </div>

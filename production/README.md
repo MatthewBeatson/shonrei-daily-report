@@ -14,6 +14,11 @@ plan work:
 3. Stocktake used to mean a Google Sheet plus an AppSheet front end,
    disconnected from Cin7 -- someone had to manually reconcile counts
    against Cin7's on-hand and key in any correction by hand.
+4. Product physically ends up wherever there's space, not in a
+   consistent bin -- there's no label or scan step confirming a product
+   landed where it's supposed to. Production runs have no physical
+   identifier travelling with them through the factory either, so
+   in-progress batches get mixed up on the floor.
 
 This is a **prototype layout**, not a deployed system yet -- it shows the
 shape the real thing would take, following the same conventions as
@@ -36,15 +41,18 @@ production/
                            clamp-at-zero actual-vs-target math
     cin7_client.py          Documents/stubs every Cin7 call either path needs
     orchestrator.py         General-path CAAC driver (see below)
+    labels.py                 ZPL text for the three label types (pure templating)
+    putaway.py                 Decides whether a putaway scan matches a SKU's home
     test_*.py                Unit tests for all of the above
     requirements.txt
-  floor-app/           Static HTML/JS -- two tabs, barcode-or-manual entry
-                       in both, no build step
-    index.html            Batches tab + Stocktake tab
+  floor-app/           Static HTML/JS -- three tabs, barcode-or-manual
+                       entry in all of them, no build step
+    index.html            Batches tab + Stocktake tab + Putaway tab
     app.js
     styles.css
   admin/               Static HTML/JS -- trigger sync/plan-batches, review
-                       and push stocktake adjustments
+                       and push stocktake adjustments, manage locations
+                       and print labels
     index.html
     app.js
     styles.css
@@ -55,12 +63,16 @@ production/
     batch_staging.py          Backorder path: applies batch_planner's output
     stocktake.py               Stocktake: record a count, snapshot Cin7's
                                 on-hand, and (separately) push an adjustment
+    warehouse.py                Locations: home-location assignment + putaway
+                                 scan recording, applies putaway.py's decision
     dry_run_cin7.py            What actually runs today instead of a real
                                 Cin7Client -- logs every call, never touches Cin7
+    (labels served straight from app.py's /labels/* routes, no separate module)
   ../migrations/
     007_production_schema.sql                  General path (production_runs)
     008_backorder_targets_and_batches.sql       Backorder path (targets, batches)
     009_stocktake.sql                           Stocktake (stocktake.counts)
+    010_warehouse_locations.sql                 Locations + putaway (warehouse.*)
 ```
 
 ## How the CAAC automation works
@@ -254,6 +266,73 @@ the admin flow (`DryRunCin7Client` logged both the on-hand read and the
 adjustment write), and confirmed a duplicate push on an already-`adjusted`
 count correctly returns 409.
 
+## Labels & warehouse locations
+
+Three barcode types, and a fix for "product placed anywhere":
+
+1. **SKU barcode** -- one per SKU, generated once, printed **identically
+   everywhere that SKU needs identifying**: on a bin/location label's
+   "what belongs here" line, and directly onto the product itself as its
+   own label. Same Code128 payload (the literal SKU text) both places --
+   no reason to mint two different codes for one SKU, and doing so would
+   just be something else to keep in sync.
+2. **Location barcode** -- one per bin, completely independent of
+   whichever SKU currently lives there. A bin's code doesn't move when
+   the product does, and a bin gets reassigned to a different SKU over
+   time -- so it needs its own fixed code, not a code derived from the
+   product.
+3. **Batch barcode** -- already existed (`batch_code`, see "Backorder
+   targets and batches" above); this is what gets printed onto a sticker
+   and travels with a physical run through the factory, the direct fix
+   for production runs having no physical identifier.
+
+**Zebra/ZPL, not a barcode-image library.** Zebra printers render
+Code128 barcodes natively from ZPL text commands (`^BC`), so
+`production/planner/labels.py` just generates that text -- no
+barcode-rendering library anywhere in this app, on either the server or
+client side. `sku_label_zpl`, `location_label_zpl` (which pulls in the
+SKU barcode wholesale if one's assigned to that bin) and
+`batch_label_zpl` are pure string templating, unit tested the same way
+as `bom_explode.py`.
+
+**Getting the ZPL to the physical printer is deliberately left as a
+download, not a network push.** This repo doesn't know whether the
+printer is reachable over the network from wherever staff browse the
+admin screen or the floor app -- that depends on real-world network
+topology this session can't see. So every `/production/labels/*` route
+returns a downloadable `.zpl` file; sending that to the printer is
+whatever tool/driver you already use for it (e.g. Zebra's ZDesigner
+Windows driver mapped as a normal printer, which happily accepts a raw
+ZPL file as a print job). If the printer turns out to be reachable at a
+known address from where these apps run, pushing directly via its raw
+port-9100 listener is a small, contained change to `_zpl_response` in
+`refresh-service/app.py` -- worth doing once the network setup is
+confirmed, not guessed at now.
+
+**The "product placed anywhere" fix, specifically:** every SKU gets one
+designated home location (`warehouse.sku_locations` -- deliberately the
+simplest model, not a full multi-bin quantity-tracking WMS, see
+migration 010's comments for why). The floor app's Putaway tab is a
+two-scan confirmation: scan the product's SKU barcode, then scan the
+bin's own location barcode, and get told immediately whether they match
+(`production/planner/putaway.py`, pure logic, unit tested). Every scan is
+logged either way (`warehouse.putaway_scans`) -- a match, a mismatch, or
+"this SKU has no home location assigned yet" are all recorded, and the
+admin screen's PUTAWAY SCANS table surfaces the mismatches, which is the
+entire point of scanning in the first place.
+
+**Verified locally, real HTTP, real Postgres:** generated real ZPL for
+all three label types (confirmed a location label picks up the currently-
+assigned SKU's barcode automatically once one's set, same payload as
+that SKU's own label), assigned a home location, then drove three
+putaway scans through the real floor-app endpoints: a correct scan
+(matched), a wrong-bin scan against the same SKU (mismatch, correctly
+reporting the expected location), and a scan for a SKU with no home
+location yet (correctly recorded with `matched: null`, not a false
+mismatch). Confirmed the batch-label download route accepts both the
+floor secret and an admin bearer token (it's printed from both apps) and
+correctly 401s with neither.
+
 ## Live concept -- what actually runs today
 
 To get something real running with minimal new setup, the concept
@@ -284,27 +363,34 @@ piece (writing to live Cin7 inventory) until the rest is proven:
   path (`GET /production/runs/open` + `POST /production/run-actuals`)
   still exists as an API for admin-triggered replenishment, just without
   its own floor-app screen yet -- see "Still not built".
-- **`production-admin/` now has three sections**: TARGETS + SYNC
-  BACKORDER DEMAND + BATCHES (see the Backorder targets section above)
-  and STOCKTAKE (review a count's variance, push it as a Cin7
-  adjustment -- see the Stocktake section above). No login of its own --
-  reuses the main dashboard's Supabase session.
+- **`floor-app/` has a third tab, Putaway** (scan a SKU, scan a bin's
+  location, get told match/mismatch -- see "Labels & warehouse
+  locations" above), and a "Print batch label" button on the Batches
+  tab's confirm screen.
+- **`production-admin/` now has five sections**: TARGETS + SYNC
+  BACKORDER DEMAND + BATCHES (see the Backorder targets section above),
+  STOCKTAKE (review a count's variance, push it as a Cin7 adjustment),
+  and WAREHOUSE LOCATIONS + PUTAWAY SCANS (add locations, assign SKUs'
+  home locations, download SKU/location labels, review mismatches). No
+  login of its own -- reuses the main dashboard's Supabase session.
 - **Deliberately not wired yet: real Cin7 calls, on any path.** See the
   dry-run explanations above for the backorder and stocktake paths; the
   general path is the same idea (`/production/plan` takes demand/BOM/
   on-hand on the request body, `run-actuals` marks a run `completed` in
-  our own database only). All three are provably correct against a real
+  our own database only). All are provably correct against a real
   database with zero risk to live Cin7 inventory while the real
-  endpoints are still unconfirmed.
+  endpoints are still unconfirmed. Labels/locations/putaway don't touch
+  Cin7 at all -- there's no dry-run needed there, it's a genuinely
+  separate concern from the Cin7 sync paths.
 
-**To try it locally:** run all three migrations in order
-(`migrations/007_production_schema.sql`, then `008_...sql`, then
-`009_stocktake.sql`, each via `python scripts/run_migration.py`) against
-your `.env`, set `FLOOR_APP_SHARED_SECRET` in both `backend/.env` and
-wherever `refresh-service` runs, start both services, then open
-`/production-floor/` for the floor app (Batches or Stocktake tab) or
-`/production-admin/` for the admin screen (signed in via the main
-dashboard first, same tab).
+**To try it locally:** run all four migrations in order
+(`007_production_schema.sql`, `008_...sql`, `009_stocktake.sql`,
+`010_warehouse_locations.sql`, each via `python scripts/run_migration.py`)
+against your `.env`, set `FLOOR_APP_SHARED_SECRET` in both
+`backend/.env` and wherever `refresh-service` runs, start both services,
+then open `/production-floor/` for the floor app (Batches, Stocktake, or
+Putaway tab) or `/production-admin/` for the admin screen (signed in via
+the main dashboard first, same tab).
 
 ## Still not built
 
@@ -323,6 +409,16 @@ dashboard first, same tab).
   raw API call.
 - Photo/OCR fallback for the rare case even the one-tap floor app is too
   much friction.
-- Stocktake locations are a free-text field today, not validated against
-  Cin7's actual location list -- fine for Shonrei's single-location use
-  so far, would need a real lookup if that changes.
+- **Stocktake's `location` field is still free text**, not linked to
+  `warehouse.locations` -- the two were built separately and haven't
+  been reconciled. Worth wiring stocktake's location field to the same
+  location picker/barcode once both have been used for a while and it's
+  clear they should be the same list.
+- **Direct network printing** -- every label is a downloadable `.zpl`
+  file today (see "Labels & warehouse locations" above); pushing
+  straight to the printer over the network is a small change once the
+  printer's actual network reachability from these apps is confirmed.
+- **Label size/layout is a guess** (4in x 2in, hand-placed field
+  coordinates in `labels.py`) -- adjust `LABEL_WIDTH_DOTS`/
+  `LABEL_HEIGHT_DOTS` and the `^FO` coordinates once real label stock is
+  in hand and a test print shows what needs to move.

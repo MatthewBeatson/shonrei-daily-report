@@ -63,6 +63,34 @@ function fmtDate(v) {
   return new Date(v).toLocaleString('en-NZ', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// Fetches a ZPL label file and triggers a normal browser download --
+// whoever's at the printer sends the .zpl file to it via Zebra's own
+// tool/driver (see production/README.md -- this app doesn't push labels
+// to the printer over the network itself).
+async function downloadLabel(path, suggestedFilename) {
+  const token = accessToken();
+  if (!token) { showSignedOut(); return; }
+  try {
+    const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+    if (res.status === 401) { showSignedOut(); return; }
+    if (!res.ok) {
+      const body = (res.headers.get('content-type') || '').includes('application/json') ? await res.json() : null;
+      throw new Error(body?.error || `Couldn't fetch label (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
 // -- Targets -----------------------------------------------------------
 
 async function loadTargets() {
@@ -195,7 +223,13 @@ async function loadBatches() {
         <td><span class="status-pill ${b.status}">${escapeHtml(b.status)}</span></td>
         <td>${b.actual_qty != null ? escapeHtml(b.actual_qty) + (b.reject_qty ? ` (${escapeHtml(b.reject_qty)} rej.)` : '') : '—'}</td>
         <td>${b.reported_at ? `${fmtDate(b.reported_at)} (${escapeHtml(b.reported_via)})` : '—'}</td>
+        <td class="narrow"></td>
       `;
+      const labelBtn = document.createElement('button');
+      labelBtn.className = 'btn-link';
+      labelBtn.textContent = 'Print';
+      labelBtn.addEventListener('click', () => downloadLabel(`/production/labels/batch/${b.id}`, `batch-${b.batch_code}.zpl`));
+      tr.querySelector('td.narrow').appendChild(labelBtn);
       tbody.appendChild(tr);
     }
   } catch (err) {
@@ -252,13 +286,131 @@ async function pushAdjustment(countId, sku) {
   }
 }
 
+// -- Warehouse locations -----------------------------------------------
+
+async function loadLocations() {
+  const tbody = document.getElementById('locations-tbody');
+  const empty = document.getElementById('locations-empty');
+  try {
+    const { locations } = await api('/production/warehouse/locations');
+    tbody.innerHTML = '';
+    empty.hidden = locations.length > 0;
+    for (const loc of locations) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(loc.code)}</td>
+        <td>${escapeHtml(loc.description || '—')}</td>
+        <td>${escapeHtml(loc.current_sku || '—')}</td>
+        <td class="narrow"></td>
+        <td class="narrow"></td>
+      `;
+
+      const assignCell = tr.querySelector('td.narrow');
+      const skuInput = document.createElement('input');
+      skuInput.type = 'text';
+      skuInput.placeholder = 'SKU';
+      skuInput.style.width = '110px';
+      skuInput.style.display = 'inline-block';
+      const assignBtn = document.createElement('button');
+      assignBtn.className = 'btn-link';
+      assignBtn.textContent = 'Assign';
+      assignBtn.addEventListener('click', () => assignSkuLocation(skuInput.value.trim(), loc.code));
+      assignCell.appendChild(skuInput);
+      assignCell.appendChild(document.createTextNode(' '));
+      assignCell.appendChild(assignBtn);
+
+      const labelCell = tr.querySelectorAll('td.narrow')[1];
+      const labelBtn = document.createElement('button');
+      labelBtn.className = 'btn-link';
+      labelBtn.textContent = 'Print';
+      labelBtn.addEventListener('click', () => downloadLabel(`/production/labels/location/${encodeURIComponent(loc.code)}`, `location-${loc.code}.zpl`));
+      labelCell.appendChild(labelBtn);
+
+      tbody.appendChild(tr);
+    }
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
+async function addLocation() {
+  const code = document.getElementById('new-location-code').value.trim();
+  const description = document.getElementById('new-location-description').value.trim();
+  if (!code) { setError('Enter a location code first.'); return; }
+  setError('');
+  try {
+    await api('/production/warehouse/locations', {
+      method: 'POST',
+      body: JSON.stringify({ code, description: description || null }),
+    });
+    document.getElementById('new-location-code').value = '';
+    document.getElementById('new-location-description').value = '';
+    setSuccess(`Added location ${code}.`);
+    await loadLocations();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+async function assignSkuLocation(sku, locationCode) {
+  if (!sku) { setError('Enter a SKU to assign to this location.'); return; }
+  setError('');
+  try {
+    await api(`/production/warehouse/sku-locations/${encodeURIComponent(sku)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ location_code: locationCode }),
+    });
+    setSuccess(`${sku}'s home is now ${locationCode}.`);
+    await loadLocations();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+// -- Putaway scans -------------------------------------------------------
+
+async function loadPutawayScans() {
+  const tbody = document.getElementById('putaway-tbody');
+  const empty = document.getElementById('putaway-empty');
+  try {
+    const { scans } = await api('/production/warehouse/putaway-scans');
+    tbody.innerHTML = '';
+    empty.hidden = scans.length > 0;
+    for (const s of scans) {
+      const tr = document.createElement('tr');
+      if (!s.matched) tr.className = 'closed-row';
+      const resultText = s.matched ? 'Match' : (s.expected_location_code ? 'Mismatch' : 'No home set');
+      const resultPill = s.matched ? 'completed' : (s.expected_location_code ? 'mismatch' : 'issued');
+      tr.innerHTML = `
+        <td>${escapeHtml(s.sku)}</td>
+        <td>${escapeHtml(s.scanned_location_code)}</td>
+        <td>${escapeHtml(s.expected_location_code || '—')}</td>
+        <td><span class="status-pill ${resultPill}">${resultText}</span></td>
+        <td>${escapeHtml(s.scanned_by || '—')}</td>
+        <td>${fmtDate(s.scanned_at)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
 // -- Wire up -------------------------------------------------------------
 
 document.getElementById('refresh-targets-btn').addEventListener('click', loadTargets);
 document.getElementById('refresh-batches-btn').addEventListener('click', loadBatches);
 document.getElementById('refresh-stocktake-btn').addEventListener('click', loadStocktake);
+document.getElementById('refresh-locations-btn').addEventListener('click', loadLocations);
+document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
+document.getElementById('add-location-btn').addEventListener('click', addLocation);
+document.getElementById('download-sku-label-btn').addEventListener('click', () => {
+  const sku = document.getElementById('sku-label-input').value.trim();
+  if (!sku) { setError('Enter a SKU first.'); return; }
+  downloadLabel(`/production/labels/sku/${encodeURIComponent(sku)}`, `sku-${sku}.zpl`);
+});
 
 (function init() {
   if (!accessToken()) {
@@ -273,4 +425,6 @@ document.getElementById('sync-demand-btn').addEventListener('click', syncDemand)
   loadTargets();
   loadBatches();
   loadStocktake();
+  loadLocations();
+  loadPutawayScans();
 })();

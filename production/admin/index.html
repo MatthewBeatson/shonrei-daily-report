@@ -91,7 +91,7 @@
         </div>
         <table class="overrides-table" id="batches-table">
           <thead>
-            <tr><th>Batch code</th><th>SKU</th><th>Priority</th><th>Planned</th><th>Status</th><th>Actual</th><th>Reported</th></tr>
+            <tr><th>Batch code</th><th>SKU</th><th>Priority</th><th>Planned</th><th>Status</th><th>Actual</th><th>Reported</th><th>Label</th></tr>
           </thead>
           <tbody id="batches-tbody"></tbody>
         </table>
@@ -118,6 +118,61 @@
           <tbody id="stocktake-tbody"></tbody>
         </table>
         <div class="sub" id="stocktake-empty" hidden>No counts yet.</div>
+      </div>
+    </div>
+
+    <!-- WAREHOUSE LOCATIONS -->
+    <div class="report-section">
+      <div class="section-header">WAREHOUSE LOCATIONS</div>
+      <div class="section-body">
+        <p class="sub">
+          One barcode per bin (its location code) and one barcode per SKU
+          (reused verbatim on the SKU's own product label). Assigning a
+          SKU's home location here is what the floor app's Putaway tab
+          checks a scan against -- see production/README.md.
+        </p>
+
+        <div class="admin-toolbar">
+          <input type="text" id="new-location-code" placeholder="Location code, e.g. A-03-02" style="max-width:180px;">
+          <input type="text" id="new-location-description" placeholder="Description (optional)" style="max-width:220px;">
+          <button class="btn-primary" id="add-location-btn">Add location</button>
+        </div>
+
+        <table class="overrides-table" id="locations-table">
+          <thead>
+            <tr><th>Code</th><th>Description</th><th>Current SKU</th><th>Assign SKU</th><th>Label</th></tr>
+          </thead>
+          <tbody id="locations-tbody"></tbody>
+        </table>
+        <div class="sub" id="locations-empty" hidden>No locations yet -- add one above.</div>
+
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-locations-btn">Refresh</button>
+        </div>
+
+        <p class="sub" style="margin-top:16px;">Print a product/SKU label directly (same barcode as any bin it's assigned to):</p>
+        <div class="admin-toolbar">
+          <input type="text" id="sku-label-input" placeholder="SKU" style="max-width:180px;">
+          <button class="btn-primary" id="download-sku-label-btn">Download SKU label</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PUTAWAY SCANS -->
+    <div class="report-section">
+      <div class="section-header">PUTAWAY SCANS</div>
+      <div class="section-body">
+        <p class="sub">Every scan from the floor app's Putaway tab, most recent first. Mismatches are the point of this list.</p>
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-putaway-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="putaway-table">
+          <thead>
+            <tr><th>SKU</th><th>Scanned location</th><th>Expected</th><th>Result</th><th>By</th><th>When</th></tr>
+          </thead>
+          <tbody id="putaway-tbody"></tbody>
+        </table>
+        <div class="sub" id="putaway-empty" hidden>No putaway scans yet.</div>
       </div>
     </div>
   </div>

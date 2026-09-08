@@ -15,8 +15,16 @@ const FLOOR_SECRET = window.__FLOOR_CONFIG__?.FLOOR_SECRET;
 
 // -- Tabs ----------------------------------------------------------------
 
-const tabPanels = { batches: document.getElementById('tabBatches'), stocktake: document.getElementById('tabStocktake') };
-const tabBtns = { batches: document.getElementById('tabBtnBatches'), stocktake: document.getElementById('tabBtnStocktake') };
+const tabPanels = {
+  batches: document.getElementById('tabBatches'),
+  stocktake: document.getElementById('tabStocktake'),
+  putaway: document.getElementById('tabPutaway'),
+};
+const tabBtns = {
+  batches: document.getElementById('tabBtnBatches'),
+  stocktake: document.getElementById('tabBtnStocktake'),
+  putaway: document.getElementById('tabBtnPutaway'),
+};
 
 function showTab(name) {
   for (const key of Object.keys(tabPanels)) {
@@ -25,9 +33,11 @@ function showTab(name) {
   }
   if (name === 'batches') batchCodeInput.focus();
   if (name === 'stocktake') document.getElementById('stSkuInput').focus();
+  if (name === 'putaway') document.getElementById('paSkuInput').focus();
 }
 tabBtns.batches.addEventListener('click', () => showTab('batches'));
 tabBtns.stocktake.addEventListener('click', () => showTab('stocktake'));
+tabBtns.putaway.addEventListener('click', () => showTab('putaway'));
 
 let currentBatch = null;
 let actualQty = 0;
@@ -76,6 +86,40 @@ async function apiFetch(path, options = {}) {
   }
   return body;
 }
+
+// Fetches a ZPL label file (with the floor secret, same as any other
+// call here) and triggers a normal browser download -- whoever's at the
+// label printer sends the downloaded .zpl file to it via whatever
+// tool/driver Zebra's printer already uses (see production/README.md --
+// this app doesn't push labels to the printer over the network itself).
+async function downloadLabel(path, suggestedFilename) {
+  const res = await fetch(path, { headers: { 'X-Floor-Secret': FLOOR_SECRET || '' } });
+  if (!res.ok) {
+    const body = (res.headers.get('content-type') || '').includes('application/json') ? await res.json() : null;
+    throw new Error(body?.error || `Couldn't fetch label (${res.status})`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = suggestedFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('printBatchLabelBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('printBatchLabelBtn');
+  btn.disabled = true;
+  try {
+    await downloadLabel(`/production/labels/batch/${currentBatch.id}`, `batch-${currentBatch.batch_code}.zpl`);
+  } catch (err) {
+    alert(`Couldn't get label: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function lookupBatchCode(code) {
   scanError.hidden = true;
@@ -329,4 +373,84 @@ function resetToStScan() {
   stScanError.hidden = true;
   stSkuInput.value = '';
   stSkuInput.focus();
+}
+
+// -- Putaway ---------------------------------------------------------------
+// The "product placed anywhere" fix: scan the product's SKU barcode, then
+// scan the bin's own location barcode -- two independent scans, told
+// immediately whether they match that SKU's designated home location.
+// See production/README.md "Labels & warehouse locations".
+
+let paSku = null;
+
+const paSkuStep = document.getElementById('paSkuStep');
+const paLocationStep = document.getElementById('paLocationStep');
+const paResultStep = document.getElementById('paResultStep');
+const paAgainBtn = document.getElementById('paAgainBtn');
+const paSkuInput = document.getElementById('paSkuInput');
+const paLocationInput = document.getElementById('paLocationInput');
+
+document.getElementById('paSkuNextBtn').addEventListener('click', () => goToPaLocationStep());
+paSkuInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); goToPaLocationStep(); } });
+document.getElementById('paLocationSubmitBtn').addEventListener('click', submitPutawayScan);
+paLocationInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPutawayScan(); } });
+paAgainBtn.addEventListener('click', resetToPaScan);
+
+function goToPaLocationStep() {
+  const sku = paSkuInput.value.trim();
+  if (!sku) return;
+  paSku = sku;
+  document.getElementById('paSkuLine').textContent = sku;
+  paSkuStep.hidden = true;
+  paLocationStep.hidden = false;
+  paLocationInput.value = '';
+  paLocationInput.focus();
+  paAgainBtn.hidden = false;
+}
+
+async function submitPutawayScan() {
+  const locationCode = paLocationInput.value.trim();
+  if (!locationCode) return;
+  const btn = document.getElementById('paLocationSubmitBtn');
+  btn.disabled = true;
+
+  try {
+    const data = await apiFetch('/production/warehouse/putaway-scans', {
+      method: 'POST',
+      body: JSON.stringify({ sku: paSku, scanned_location_code: locationCode }),
+    });
+
+    const icon = document.getElementById('paResultIcon');
+    const message = document.getElementById('paResultMessage');
+    if (data.matched === true) {
+      icon.textContent = '✓';
+      icon.className = 'pa-result-icon match';
+      message.textContent = `Correct -- ${paSku} belongs in ${locationCode}.`;
+    } else if (data.matched === false) {
+      icon.textContent = '✗';
+      icon.className = 'pa-result-icon mismatch';
+      message.textContent = `Wrong bin -- ${paSku}'s home is ${data.expected_location_code}, not ${locationCode}.`;
+    } else {
+      icon.textContent = '?';
+      icon.className = 'pa-result-icon unknown';
+      message.textContent = `${paSku} has no home location set yet -- scan recorded, ask admin to assign one.`;
+    }
+
+    paLocationStep.hidden = true;
+    paResultStep.hidden = false;
+  } catch (err) {
+    alert(`Couldn't submit: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetToPaScan() {
+  paSku = null;
+  paSkuStep.hidden = false;
+  paLocationStep.hidden = true;
+  paResultStep.hidden = true;
+  paAgainBtn.hidden = true;
+  paSkuInput.value = '';
+  paSkuInput.focus();
 }
