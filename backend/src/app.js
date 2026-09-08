@@ -9,6 +9,7 @@ const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const FRONTEND_DIR = path.join(__dirname, '../../frontend');
 const FLOOR_APP_DIR = path.join(__dirname, '../../production/floor-app');
+const PRODUCTION_ADMIN_DIR = path.join(__dirname, '../../production/admin');
 
 function createApp() {
   const app = express();
@@ -40,6 +41,12 @@ function createApp() {
   // frontend/) served under its own path so a shop tablet bookmarks
   // /production-floor/ instead of the management report.
   app.use('/production-floor', express.static(FLOOR_APP_DIR));
+
+  // Small admin screen for triggering a backorder-demand sync and
+  // splitting a target into batches -- reuses the main dashboard's
+  // Supabase session rather than its own login (see
+  // production/admin/app.js).
+  app.use('/production-admin', express.static(PRODUCTION_ADMIN_DIR));
 
   app.use(express.static(FRONTEND_DIR));
 

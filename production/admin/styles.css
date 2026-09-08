@@ -1,0 +1,57 @@
+/* Page-specific additions on top of the shared /styles.css (topbar,
+   content, report-section, overrides-table, card, btn-primary/link,
+   error-text, sub, etc. all come from there -- this file only adds what
+   this page needs that the main dashboard doesn't have). */
+
+.section-body { padding: 14px 16px; }
+
+.admin-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.success-text {
+  color: var(--green);
+  font-size: 0.9rem;
+  margin: 8px 0;
+}
+.success-text:empty { display: none; }
+
+.dry-run-output {
+  background: var(--section-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.overrides-table input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.overrides-table td.narrow { width: 1%; white-space: nowrap; }
+.overrides-table tr.closed-row { opacity: 0.6; }
+
+.status-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.status-pill.active, .status-pill.planned { background: var(--blue-bg); color: var(--blue); }
+.status-pill.closed, .status-pill.completed { background: rgba(26,127,55,0.12); color: var(--green); }
+.status-pill.issued { background: rgba(180,83,9,0.12); color: #b45309; }
+
+.batch-code { font-family: monospace; font-size: 0.85rem; }

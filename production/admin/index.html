@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Shonrei Production Admin</title>
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="styles.css" />
+<meta name="theme-color" content="#17365D" />
+<meta name="robots" content="noindex, nofollow" />
+</head>
+<body>
+
+<!-- No login form of its own -- reuses the main dashboard's Supabase
+     session (sessionStorage.access_token), same origin. If it's missing
+     or expired, #view-signed-out below tells you to sign in there first
+     (same tab, so the token carries over when you come back). -->
+<div id="view-signed-out" class="center-screen hidden">
+  <div class="card">
+    <h1>Sign in required</h1>
+    <p class="sub">
+      This page reuses your Shonrei Daily Report sign-in.
+      <a href="/">Sign in on the dashboard</a>, then come back to this tab.
+    </p>
+  </div>
+</div>
+
+<div id="view-admin" class="hidden" style="display:flex; flex-direction:column; min-height:100vh;">
+  <div class="topbar">
+    <div>
+      <h1>PRODUCTION ADMIN</h1>
+      <div class="as-of">Backorder targets &amp; batches -- see production/README.md</div>
+    </div>
+    <div class="right">
+      <a class="btn-link" href="/" style="color:#fff; opacity:0.8;">&larr; Dashboard</a>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="error-text" id="admin-error"></div>
+    <div class="success-text" id="admin-success"></div>
+
+    <!-- TARGETS -->
+    <div class="report-section">
+      <div class="section-header">TARGETS</div>
+      <div class="section-body">
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-targets-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="targets-table">
+          <thead>
+            <tr><th>SKU</th><th>Status</th><th>Outstanding qty</th><th>Cin7 assembly</th><th>Plan batches</th></tr>
+          </thead>
+          <tbody id="targets-tbody"></tbody>
+        </table>
+        <div class="sub" id="targets-empty" hidden>No targets yet -- sync demand below to create one.</div>
+      </div>
+    </div>
+
+    <!-- SYNC DEMAND -->
+    <div class="report-section">
+      <div class="section-header">SYNC BACKORDER DEMAND</div>
+      <div class="section-body">
+        <p class="sub">
+          One row per backordered SO line. Rows are grouped by SKU and summed
+          before syncing -- a SKU's target is created, adjusted, or closed to
+          match the new total (see production/README.md for the exact rules).
+          Real Cin7 SO-line extraction isn't wired in yet, so this is entered
+          by hand for now.
+        </p>
+        <table class="overrides-table" id="demand-table">
+          <thead>
+            <tr><th>SKU</th><th>SO number</th><th>Order date</th><th>Qty backordered</th><th></th></tr>
+          </thead>
+          <tbody id="demand-tbody"></tbody>
+        </table>
+        <div class="admin-toolbar">
+          <button class="btn-link" id="add-demand-row-btn">+ Add row</button>
+          <button class="btn-primary" id="sync-demand-btn">Sync targets</button>
+        </div>
+        <pre class="dry-run-output" id="sync-result" hidden></pre>
+      </div>
+    </div>
+
+    <!-- BATCHES -->
+    <div class="report-section">
+      <div class="section-header">BATCHES</div>
+      <div class="section-body">
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-batches-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="batches-table">
+          <thead>
+            <tr><th>Batch code</th><th>SKU</th><th>Priority</th><th>Planned</th><th>Status</th><th>Actual</th><th>Reported</th></tr>
+          </thead>
+          <tbody id="batches-tbody"></tbody>
+        </table>
+        <div class="sub" id="batches-empty" hidden>No batches yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
