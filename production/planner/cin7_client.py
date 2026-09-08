@@ -138,3 +138,25 @@ class Cin7Client:
         genuinely moves -- everything upstream (targets, batches) is
         planning state only."""
         raise NotImplementedError("wire against live Cin7 assembly create/authorise/allocate/complete endpoints")
+
+    # -- stocktake (see refresh-service/stocktake.py) -------------------
+    # Replaces the old Google Sheet + AppSheet workflow. A count is
+    # recorded locally, snapshotted against Cin7's on-hand qty at that
+    # moment (for the variance shown to whoever reviews it), and -- only
+    # once reviewed -- pushed to Cin7 as a stock adjustment. Same
+    # confirm-before-wiring status as everything else in this file.
+
+    def get_stock_on_hand(self, sku: str) -> float:
+        """Cin7's current on-hand qty for one SKU, snapshotted at count
+        time so the variance shown later reflects what Cin7 actually said
+        when the count was taken, not whatever it says by the time
+        someone reviews it."""
+        raise NotImplementedError("wire against live Cin7 product/availability endpoint")
+
+    def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
+        """Push a physical count to Cin7 as a stock adjustment, setting
+        on-hand to `new_qty`. Returns Cin7's adjustment/transaction id.
+        Deliberately a separate, explicit call from recording a count --
+        see stocktake.py: a count is never auto-pushed, a person reviews
+        the variance first."""
+        raise NotImplementedError("wire against live Cin7 stock adjustment endpoint")

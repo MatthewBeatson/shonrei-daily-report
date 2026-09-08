@@ -13,6 +13,22 @@
 
 const FLOOR_SECRET = window.__FLOOR_CONFIG__?.FLOOR_SECRET;
 
+// -- Tabs ----------------------------------------------------------------
+
+const tabPanels = { batches: document.getElementById('tabBatches'), stocktake: document.getElementById('tabStocktake') };
+const tabBtns = { batches: document.getElementById('tabBtnBatches'), stocktake: document.getElementById('tabBtnStocktake') };
+
+function showTab(name) {
+  for (const key of Object.keys(tabPanels)) {
+    tabPanels[key].hidden = key !== name;
+    tabBtns[key].classList.toggle('active', key === name);
+  }
+  if (name === 'batches') batchCodeInput.focus();
+  if (name === 'stocktake') document.getElementById('stSkuInput').focus();
+}
+tabBtns.batches.addEventListener('click', () => showTab('batches'));
+tabBtns.stocktake.addEventListener('click', () => showTab('stocktake'));
+
 let currentBatch = null;
 let actualQty = 0;
 let usingPlannedQty = true;
@@ -197,4 +213,120 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+// -- Stocktake -------------------------------------------------------------
+// Replaces the old Google Sheet + AppSheet workflow: scan/type any SKU,
+// any time (not a session you open and close), enter the counted qty,
+// submit. Recording a count never touches Cin7 by itself -- see
+// refresh-service/stocktake.py -- an admin reviews the variance and
+// pushes an adjustment separately, from the production admin screen.
+
+let currentStSku = null;
+let stQty = 0;
+let stViaCode = false;
+
+const stScanStep = document.getElementById('stScanStep');
+const stCountStep = document.getElementById('stCountStep');
+const stDoneStep = document.getElementById('stDoneStep');
+const stCountAgainBtn = document.getElementById('stCountAgainBtn');
+const stSkuInput = document.getElementById('stSkuInput');
+const stScanError = document.getElementById('stScanError');
+
+document.getElementById('stLookupBtn').addEventListener('click', () => openStocktakeSku(stSkuInput.value.trim(), false));
+stSkuInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    openStocktakeSku(stSkuInput.value.trim(), true);
+  }
+});
+document.getElementById('stQtyDown').addEventListener('click', () => adjustStQty(-1));
+document.getElementById('stQtyUp').addEventListener('click', () => adjustStQty(1));
+document.getElementById('stSubmitBtn').addEventListener('click', submitStocktakeCount);
+stCountAgainBtn.addEventListener('click', resetToStScan);
+document.getElementById('stDoneAgainBtn').addEventListener('click', resetToStScan);
+
+async function openStocktakeSku(sku, viaCode) {
+  stScanError.hidden = true;
+  if (!sku) return;
+  currentStSku = sku;
+  stViaCode = viaCode;
+  stQty = 0;
+
+  document.getElementById('stSkuLine').textContent = sku;
+  document.getElementById('stLastCountLine').textContent = 'Loading last count...';
+  renderStQty();
+
+  stScanStep.hidden = true;
+  stCountStep.hidden = false;
+  stDoneStep.hidden = true;
+  stCountAgainBtn.hidden = false;
+  stSkuInput.value = '';
+
+  try {
+    const { count } = await apiFetch(`/production/stocktake/counts/latest/${encodeURIComponent(sku)}`);
+    if (count) {
+      const when = new Date(count.counted_at).toLocaleDateString('en-NZ');
+      document.getElementById('stLastCountLine').textContent =
+        `Last counted: ${count.counted_qty} on ${when}`;
+      stQty = Number(count.counted_qty);
+      renderStQty();
+    } else {
+      document.getElementById('stLastCountLine').textContent = 'No previous count on file.';
+    }
+  } catch (err) {
+    document.getElementById('stLastCountLine').textContent = '';
+  }
+}
+
+function adjustStQty(delta) {
+  stQty = Math.max(0, stQty + delta);
+  renderStQty();
+}
+
+function renderStQty() {
+  document.getElementById('stQtyValue').textContent = stQty;
+}
+
+async function submitStocktakeCount() {
+  const btn = document.getElementById('stSubmitBtn');
+  btn.disabled = true;
+  const location = document.getElementById('stLocationInput').value.trim();
+
+  try {
+    const data = await apiFetch('/production/stocktake/counts', {
+      method: 'POST',
+      body: JSON.stringify({
+        sku: currentStSku,
+        counted_qty: stQty,
+        location: location || null,
+        reported_via: stViaCode ? 'barcode' : 'manual',
+      }),
+    });
+    let msg = `Counted ${stQty} of ${currentStSku}.`;
+    if (data.variance != null) {
+      msg += data.variance === 0
+        ? ' Matches Cin7.'
+        : ` Variance: ${data.variance > 0 ? '+' : ''}${data.variance} vs Cin7 (${data.cin7_on_hand_snapshot}).`;
+    }
+    document.getElementById('stDoneMessage').textContent = msg;
+    stCountStep.hidden = true;
+    stDoneStep.hidden = false;
+  } catch (err) {
+    alert(`Couldn't submit count: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetToStScan() {
+  currentStSku = null;
+  stScanStep.hidden = false;
+  stCountStep.hidden = true;
+  stDoneStep.hidden = true;
+  stCountAgainBtn.hidden = true;
+  document.getElementById('stLocationInput').value = '';
+  stScanError.hidden = true;
+  stSkuInput.value = '';
+  stSkuInput.focus();
 }

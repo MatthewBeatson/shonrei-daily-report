@@ -29,6 +29,7 @@ from production_plan import ProductionPlanError, run_production_plan
 from backorder_targets import sync_targets, apply_batch_actual
 from batch_staging import stage_batches_for_target
 from dry_run_cin7 import DryRunCin7Client
+from stocktake import StocktakeError, record_count, apply_adjustment
 
 app = Flask(__name__)
 
@@ -258,6 +259,61 @@ def production_batch_actual(batch_id):
         conn.close()
 
     return jsonify(result), 201
+
+
+@app.post('/stocktake/counts')
+def stocktake_record_count():
+    """Body: {"sku", "counted_qty", "location", "reported_via", "reported_by"}.
+    Runs against DryRunCin7Client (see dry_run_cin7.py) -- recording a
+    count never touches live Cin7 on its own, see stocktake.py.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    sku = payload.get('sku')
+    counted_qty = payload.get('counted_qty')
+    if not sku or counted_qty is None:
+        return jsonify({'error': 'sku and counted_qty are required'}), 400
+
+    conn = get_conn()
+    try:
+        try:
+            result = record_count(
+                conn, DryRunCin7Client(conn), sku, counted_qty,
+                location=payload.get('location'),
+                reported_via=payload.get('reported_via') or 'manual',
+                reported_by=payload.get('reported_by'),
+            )
+        except StocktakeError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 400
+    finally:
+        conn.close()
+
+    return jsonify(result), 201
+
+
+@app.post('/stocktake/counts/<count_id>/adjust')
+def stocktake_apply_adjustment(count_id):
+    """Pushes one already-recorded count to Cin7 as a stock adjustment --
+    a deliberate, separate step from recording it, see stocktake.py.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        try:
+            result = apply_adjustment(conn, DryRunCin7Client(conn), count_id, payload.get('note'))
+        except StocktakeError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 409
+    finally:
+        conn.close()
+
+    return jsonify(result), 200
 
 
 if __name__ == '__main__':

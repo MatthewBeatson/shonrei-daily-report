@@ -203,10 +203,60 @@ async function loadBatches() {
   }
 }
 
+// -- Stocktake -------------------------------------------------------------
+
+async function loadStocktake() {
+  const tbody = document.getElementById('stocktake-tbody');
+  const empty = document.getElementById('stocktake-empty');
+  try {
+    const { counts } = await api('/production/stocktake/counts');
+    tbody.innerHTML = '';
+    empty.hidden = counts.length > 0;
+    for (const c of counts) {
+      const tr = document.createElement('tr');
+      const varianceText = c.variance == null ? '—' : (c.variance > 0 ? `+${c.variance}` : c.variance);
+      tr.innerHTML = `
+        <td>${escapeHtml(c.sku)}</td>
+        <td>${escapeHtml(c.location || '—')}</td>
+        <td>${escapeHtml(c.counted_qty)}</td>
+        <td>${escapeHtml(c.cin7_on_hand_snapshot ?? '—')}</td>
+        <td>${escapeHtml(varianceText)}</td>
+        <td><span class="status-pill ${c.status}">${escapeHtml(c.status)}</span></td>
+        <td>${fmtDate(c.counted_at)} (${escapeHtml(c.reported_via)})</td>
+        <td class="narrow"></td>
+      `;
+      if (c.status === 'recorded') {
+        const btn = document.createElement('button');
+        btn.className = 'btn-link';
+        btn.textContent = 'Push adjustment';
+        btn.addEventListener('click', () => pushAdjustment(c.id, c.sku));
+        tr.querySelector('td.narrow').appendChild(btn);
+      } else if (c.cin7_adjustment_id) {
+        tr.querySelector('td.narrow').textContent = c.cin7_adjustment_id;
+      }
+      tbody.appendChild(tr);
+    }
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
+async function pushAdjustment(countId, sku) {
+  setError('');
+  try {
+    const data = await api(`/production/stocktake/counts/${countId}/adjust`, { method: 'POST', body: JSON.stringify({}) });
+    setSuccess(`Pushed adjustment for ${sku} (Cin7 id: ${data.cin7_adjustment_id}).`);
+    await loadStocktake();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
 // -- Wire up -------------------------------------------------------------
 
 document.getElementById('refresh-targets-btn').addEventListener('click', loadTargets);
 document.getElementById('refresh-batches-btn').addEventListener('click', loadBatches);
+document.getElementById('refresh-stocktake-btn').addEventListener('click', loadStocktake);
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
 
@@ -222,4 +272,5 @@ document.getElementById('sync-demand-btn').addEventListener('click', syncDemand)
   addDemandRow();
   loadTargets();
   loadBatches();
+  loadStocktake();
 })();

@@ -225,4 +225,53 @@ router.post('/targets/:targetId/plan-batches', requireEdit, asyncHandler(async (
   res.status(201).json(data);
 }));
 
+// -- Stocktake -- replaces the old Google Sheet + AppSheet workflow, see
+//    production/README.md "Stocktake". ---------------------------------
+
+// Floor: record a count (barcode/manual, same pattern as batch reporting).
+// Never touches Cin7 by itself -- see refresh-service/stocktake.py.
+router.post('/stocktake/counts', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { sku, counted_qty, location, reported_via, reported_by } = req.body || {};
+  if (!sku || typeof counted_qty !== 'number' || counted_qty < 0) {
+    throw new ApiError(400, 'sku and a non-negative numeric counted_qty are required');
+  }
+  if (reported_via && !['barcode', 'manual'].includes(reported_via)) {
+    throw new ApiError(400, "reported_via must be 'barcode' or 'manual'");
+  }
+  const data = await callRefreshService('/stocktake/counts', {
+    sku, counted_qty, location: location || null,
+    reported_via: reported_via || 'manual', reported_by: reported_by || null,
+  });
+  res.status(201).json(data);
+}));
+
+// Floor: this SKU's most recent count, so the tab can show "last counted
+// as X, Y ago" instead of a blank form every time.
+router.get('/stocktake/counts/latest/:sku', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select sku, counted_qty, cin7_on_hand_snapshot, variance, counted_at
+     from stocktake.counts where sku = $1 order by counted_at desc limit 1`,
+    [req.params.sku]
+  );
+  res.json({ count: rows[0] || null });
+}));
+
+// Admin: every count, most recent first, for reviewing variances.
+router.get('/stocktake/counts', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select id, sku, location, counted_qty, cin7_on_hand_snapshot, variance, status,
+            reported_via, reported_by, cin7_adjustment_id, counted_at, adjusted_at
+     from stocktake.counts order by counted_at desc limit 200`
+  );
+  res.json({ counts: rows });
+}));
+
+// Admin: push one reviewed count to Cin7 as a stock adjustment.
+router.post('/stocktake/counts/:countId/adjust', requireEdit, asyncHandler(async (req, res) => {
+  const data = await callRefreshService(`/stocktake/counts/${req.params.countId}/adjust`, {
+    note: (req.body || {}).note || null,
+  });
+  res.status(200).json(data);
+}));
+
 module.exports = router;

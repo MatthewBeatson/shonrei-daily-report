@@ -57,3 +57,15 @@ class DryRunCin7Client:
     def complete_small_assembly(self, sku: str, qty: float) -> FakeAssembly:
         self._log('complete_small_assembly', sku=sku, qty=qty)
         return FakeAssembly(sku, qty, 'COMPLETED')
+
+    def get_stock_on_hand(self, sku: str) -> float:
+        # Deterministic-but-fake so a repeated count of the same SKU in a
+        # demo session shows a stable (if make-believe) baseline rather
+        # than a new random number every time.
+        fake_qty = float(sum(ord(c) for c in sku) % 200)
+        self._log('get_stock_on_hand', sku=sku, returned=fake_qty)
+        return fake_qty
+
+    def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
+        self._log('adjust_stock_on_hand', sku=sku, new_qty=new_qty, note=note)
+        return f'DRYRUN-ADJ-{next(_counter):06d}'

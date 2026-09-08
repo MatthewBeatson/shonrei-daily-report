@@ -1,6 +1,6 @@
 # Production MRP & Assembly Automation (prototype)
 
-Scaffold for the two problems raised alongside the daily report and dispatch
+Scaffold for the problems raised alongside the daily report and dispatch
 plan work:
 
 1. Cin7 Core's assembly module (Create -> Authorise -> Allocate -> Complete,
@@ -11,6 +11,9 @@ plan work:
    make it back into Cin7 -- staff are busy running the physical lines, not
    filling in forms. Outputs (FG creation at min-stock) are already handled
    by admin, so this scaffold doesn't touch that side.
+3. Stocktake used to mean a Google Sheet plus an AppSheet front end,
+   disconnected from Cin7 -- someone had to manually reconcile counts
+   against Cin7's on-hand and key in any correction by hand.
 
 This is a **prototype layout**, not a deployed system yet -- it shows the
 shape the real thing would take, following the same conventions as
@@ -35,7 +38,13 @@ production/
     orchestrator.py         General-path CAAC driver (see below)
     test_*.py                Unit tests for all of the above
     requirements.txt
-  floor-app/           Static HTML/JS -- barcode-or-manual batch reporting
+  floor-app/           Static HTML/JS -- two tabs, barcode-or-manual entry
+                       in both, no build step
+    index.html            Batches tab + Stocktake tab
+    app.js
+    styles.css
+  admin/               Static HTML/JS -- trigger sync/plan-batches, review
+                       and push stocktake adjustments
     index.html
     app.js
     styles.css
@@ -44,11 +53,14 @@ production/
     backorder_targets.py     Backorder path: applies target_sync's decisions
                               to the DB + Cin7 (via whatever client is passed)
     batch_staging.py          Backorder path: applies batch_planner's output
+    stocktake.py               Stocktake: record a count, snapshot Cin7's
+                                on-hand, and (separately) push an adjustment
     dry_run_cin7.py            What actually runs today instead of a real
                                 Cin7Client -- logs every call, never touches Cin7
   ../migrations/
     007_production_schema.sql                  General path (production_runs)
     008_backorder_targets_and_batches.sql       Backorder path (targets, batches)
+    009_stocktake.sql                           Stocktake (stocktake.counts)
 ```
 
 ## How the CAAC automation works
@@ -204,6 +216,44 @@ and the target closed with `close_assembly` logged. A duplicate
 submission on an already-completed batch correctly returned 409, and an
 unknown batch code correctly returned 404.
 
+## Stocktake
+
+Replaces the old Google Sheet + AppSheet setup with a second tab in
+`floor-app/` and a review step in `admin/`, connected to Cin7 via API
+instead of a manual reconciliation:
+
+1. **Count** -- floor staff scan or type any SKU (same one-field
+   barcode-or-manual pattern as batch reporting, no camera library),
+   enter the counted quantity, and submit. This is deliberately a
+   **rolling log, not a session** -- no "open a stocktake, count every
+   line, close it out" ceremony, matching how the old sheet was actually
+   used: whenever someone noticed a discrepancy, not on a fixed schedule.
+2. **Snapshot** -- the moment a count is recorded, `stocktake.py` also
+   captures Cin7's on-hand qty for that SKU (`cin7_client.get_stock_on_hand`,
+   dry-run today) as `cin7_on_hand_snapshot`, and the difference is a
+   generated `variance` column -- computed once, at count time, so the
+   variance shown later reflects what Cin7 said *then*, not whatever it
+   says by the time someone gets around to reviewing it. A count still
+   gets recorded even if the snapshot call fails -- the variance just
+   comes back null, logging the count always wins.
+3. **Review, then push** -- recording a count **never touches Cin7 by
+   itself**. The `production-admin` screen's STOCKTAKE table lists every
+   count with its variance and a "Push adjustment" button per still-
+   `recorded` row; only that explicit click calls
+   `cin7_client.adjust_stock_on_hand` (dry-run today) to set Cin7's
+   on-hand to the counted quantity. This mirrors how a person reviewed
+   AppSheet's numbers before touching Cin7 by hand -- the difference is
+   the push itself is now one click instead of a manual edit, and every
+   pushed count is logged (`cin7_adjustment_id`), not lost in a sheet.
+
+**Verified locally, real HTTP, real Postgres:** recorded a count for a
+SKU (42 counted against a dry-run Cin7 on-hand of 62, variance -20 written
+correctly), confirmed the floor app's "last count" lookup returns it and
+an uncounted SKU correctly returns null, pushed the adjustment through
+the admin flow (`DryRunCin7Client` logged both the on-hand read and the
+adjustment write), and confirmed a duplicate push on an already-`adjusted`
+count correctly returns 409.
+
 ## Live concept -- what actually runs today
 
 To get something real running with minimal new setup, the concept
@@ -227,43 +277,52 @@ piece (writing to live Cin7 inventory) until the rest is proven:
   `POST /production/targets/sync`, `POST /production/targets/:id/plan-batches`
   and `POST /production/batches/:id/actual` (backorder path) to the
   existing refresh-service.
-- **`floor-app/` now serves the backorder-batch path** (barcode/manual
-  entry against `production.production_batches`, see the section above)
-  since that's the one that matches how Shonrei actually runs
-  production. The general BOM-explosion path
-  (`GET /production/runs/open` + `POST /production/run-actuals`) still
-  exists as an API for admin-triggered replenishment, just without its
-  own floor-app screen yet -- see "Still not built".
-- **Deliberately not wired yet: real Cin7 calls, on either path.** See
-  the dry-run explanation above for the backorder path; the general path
-  is the same idea (`/production/plan` takes demand/BOM/on-hand on the
-  request body, `run-actuals` marks a run `completed` in our own
-  database only). Both are provably correct against a real database with
-  zero risk to live Cin7 inventory while the real endpoints are still
-  unconfirmed.
+- **`floor-app/` now has two tabs**: Batches (barcode/manual entry
+  against `production.production_batches`, see above) and Stocktake
+  (barcode/manual entry against `stocktake.counts`, see above) -- both
+  match how staff actually work the floor. The general BOM-explosion
+  path (`GET /production/runs/open` + `POST /production/run-actuals`)
+  still exists as an API for admin-triggered replenishment, just without
+  its own floor-app screen yet -- see "Still not built".
+- **`production-admin/` now has three sections**: TARGETS + SYNC
+  BACKORDER DEMAND + BATCHES (see the Backorder targets section above)
+  and STOCKTAKE (review a count's variance, push it as a Cin7
+  adjustment -- see the Stocktake section above). No login of its own --
+  reuses the main dashboard's Supabase session.
+- **Deliberately not wired yet: real Cin7 calls, on any path.** See the
+  dry-run explanations above for the backorder and stocktake paths; the
+  general path is the same idea (`/production/plan` takes demand/BOM/
+  on-hand on the request body, `run-actuals` marks a run `completed` in
+  our own database only). All three are provably correct against a real
+  database with zero risk to live Cin7 inventory while the real
+  endpoints are still unconfirmed.
 
-**To try it locally:** run both migrations
-(`python scripts/run_migration.py migrations/007_production_schema.sql`
-then `..._008_...sql`) against your `.env`, set
-`FLOOR_APP_SHARED_SECRET` in both `backend/.env` and wherever
-`refresh-service` runs, start both services, then either open
-`/production-floor/` for the floor app (backorder-batch path) or drive
-the admin endpoints directly with a report-admin's bearer token:
-`POST /production/targets/sync` with a `demand_lines_by_sku` body, then
-`POST /production/targets/:id/plan-batches` with a `suggested_run_size`.
+**To try it locally:** run all three migrations in order
+(`migrations/007_production_schema.sql`, then `008_...sql`, then
+`009_stocktake.sql`, each via `python scripts/run_migration.py`) against
+your `.env`, set `FLOOR_APP_SHARED_SECRET` in both `backend/.env` and
+wherever `refresh-service` runs, start both services, then open
+`/production-floor/` for the floor app (Batches or Stocktake tab) or
+`/production-admin/` for the admin screen (signed in via the main
+dashboard first, same tab).
 
 ## Still not built
 
-- **Real Cin7 SO backorder extraction**
-  (`backorder_targets.extract_demand_lines`) and the real
-  Create/Authorise/Allocate/Complete/Cancel API calls on both paths --
-  see `scripts/dump_sample_bom.py`.
-- **QR-scan-to-select on the general-path floor screen** -- the
-  backorder-batch path already has barcode/manual entry; the general
+- **Real Cin7 calls everywhere they're currently dry-run**: SO backorder
+  extraction (`backorder_targets.extract_demand_lines`), the
+  Create/Authorise/Allocate/Complete/Cancel assembly calls, and
+  stocktake's `get_stock_on_hand`/`adjust_stock_on_hand` -- all confirmed
+  the same way, via `scripts/dump_sample_bom.py` (worth extending to
+  cover the stock-adjustment endpoint shape too, not just BOM/assembly).
+- **QR-scan-to-select on the general-path floor screen** -- Batches and
+  Stocktake both already have barcode/manual entry; the general
   BOM-explosion path (`production_runs`) has no floor-app screen of its
   own yet, admin-triggered and API-only for now.
-- An admin UI for triggering a target sync / batch plan, and for
-  `/production/plan` -- all three are raw API calls today; the 6-user
-  report app would be the natural place to add pages for them.
+- An admin UI for `/production/plan` (the general path) -- everything on
+  the backorder and stocktake paths now has one, this is the remaining
+  raw API call.
 - Photo/OCR fallback for the rare case even the one-tap floor app is too
   much friction.
+- Stocktake locations are a free-text field today, not validated against
+  Cin7's actual location list -- fine for Shonrei's single-location use
+  so far, would need a real lookup if that changes.

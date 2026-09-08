@@ -98,6 +98,28 @@
         <div class="sub" id="batches-empty" hidden>No batches yet.</div>
       </div>
     </div>
+
+    <!-- STOCKTAKE -->
+    <div class="report-section">
+      <div class="section-header">STOCKTAKE</div>
+      <div class="section-body">
+        <p class="sub">
+          Counts logged from the floor app's Stocktake tab. Recording a
+          count never touches Cin7 -- review the variance here, then push
+          the ones you trust as a Cin7 stock adjustment.
+        </p>
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-stocktake-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="stocktake-table">
+          <thead>
+            <tr><th>SKU</th><th>Location</th><th>Counted</th><th>Cin7 on hand</th><th>Variance</th><th>Status</th><th>Counted</th><th></th></tr>
+          </thead>
+          <tbody id="stocktake-tbody"></tbody>
+        </table>
+        <div class="sub" id="stocktake-empty" hidden>No counts yet.</div>
+      </div>
+    </div>
   </div>
 </div>
 
