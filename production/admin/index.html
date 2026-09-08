@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>Shonrei Production Admin</title>
 <link rel="stylesheet" href="/styles.css" />
-<link rel="stylesheet" href="styles.css" />
+<link rel="stylesheet" href="admin.css" />
 <meta name="theme-color" content="#17365D" />
 <meta name="robots" content="noindex, nofollow" />
 </head>
@@ -20,7 +20,9 @@
     <h1>Sign in required</h1>
     <p class="sub">
       This page reuses your Shonrei Daily Report sign-in.
-      <a href="/">Sign in on the dashboard</a>, then come back to this tab.
+      <a href="/" id="signin-dashboard-link">Sign in on the dashboard</a>, then use the
+      "Production admin" link there again -- it hands this page a fresh
+      token, since this is a separate site from the dashboard.
     </p>
   </div>
 </div>
@@ -32,7 +34,7 @@
       <div class="as-of">Backorder targets &amp; batches -- see production/README.md</div>
     </div>
     <div class="right">
-      <a class="btn-link" href="/" style="color:#fff; opacity:0.8;">&larr; Dashboard</a>
+      <a class="btn-link" id="dashboard-link" href="/" style="color:#fff; opacity:0.8;">&larr; Dashboard</a>
     </div>
   </div>
 
@@ -193,6 +195,7 @@
   </div>
 </div>
 
+<script src="/app-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

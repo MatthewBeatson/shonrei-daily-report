@@ -1,9 +1,17 @@
 // Production admin: trigger a backorder-demand sync and split a target
-// into batches. Reuses the main dashboard's Supabase session
-// (sessionStorage.access_token, same origin) rather than having its own
-// login form -- see index.html's comment. No PIN/MFA handling here: if
-// the token is missing or the API returns 401, this page just points
-// back at the dashboard to sign in again.
+// into batches. Reuses the main dashboard's Supabase session rather than
+// having its own login form -- see index.html's comment. No PIN/MFA
+// handling here: if the token is missing or the API returns 401, this
+// page just points back at the dashboard to sign in again.
+//
+// This app now lives on its own domain (production.shonrei.co.nz, once
+// configured), a different origin from the dashboard, so it can't just
+// read the dashboard's sessionStorage directly -- the dashboard instead
+// hands the token over once via a #token=... URL fragment when the nav
+// link is clicked (see frontend/app.js). importTokenFromUrlFragment()
+// picks that up on load, stores it in *this* origin's sessionStorage,
+// and scrubs it from the address bar immediately so it doesn't linger
+// in browser history.
 
 const viewSignedOut = document.getElementById('view-signed-out');
 const viewAdmin = document.getElementById('view-admin');
@@ -12,6 +20,22 @@ const adminSuccess = document.getElementById('admin-success');
 
 function accessToken() {
   return sessionStorage.getItem('access_token');
+}
+
+function importTokenFromUrlFragment() {
+  const match = /(?:^|&)token=([^&]+)/.exec(window.location.hash.slice(1));
+  if (!match) return;
+  sessionStorage.setItem('access_token', decodeURIComponent(match[1]));
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+}
+
+function wireDashboardLink() {
+  const url = window.__APP_CONFIG__?.DASHBOARD_URL;
+  if (!url) return;
+  for (const id of ['dashboard-link', 'signin-dashboard-link']) {
+    const link = document.getElementById(id);
+    if (link) link.href = url;
+  }
 }
 
 function showSignedOut() {
@@ -420,6 +444,8 @@ document.getElementById('download-sku-label-btn').addEventListener('click', () =
 });
 
 (function init() {
+  wireDashboardLink();
+  importTokenFromUrlFragment();
   if (!accessToken()) {
     showSignedOut();
     return;

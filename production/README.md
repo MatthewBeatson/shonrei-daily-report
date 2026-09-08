@@ -412,6 +412,48 @@ then open `/production-floor/` for the floor app (Batches, Stocktake, or
 Putaway tab) or `/production-admin/` for the admin screen (signed in via
 the main dashboard first, same tab).
 
+## A dedicated URL
+
+`/production-admin` and `/production-floor` read as paths bolted onto
+the daily report rather than their own system, which they now genuinely
+are. `PRODUCTION_HOST` (e.g. `production.shonrei.co.nz`) gives them a
+real subdomain **without** a second Render service or a second Supabase
+project -- same backend process, same deploy, just a second hostname
+routed to it (`backend/src/app.js` picks which app to serve based on the
+request's Host header). Unset, everything behaves exactly as it did
+before this existed -- verified locally by booting the backend both with
+and without `PRODUCTION_HOST` set and confirming the old paths, and a
+random Host header, still land on the daily report when it's unset.
+
+**Setup, once you have a domain/subdomain picked:**
+1. Add a DNS CNAME for that hostname pointing at this Render service.
+2. Add the same hostname as a Custom Domain on **this same service** in
+   Render's dashboard (Settings -> Custom Domains) -- `render.yaml` can't
+   provision that step, it just needs to already be there for requests
+   with that Host header to actually arrive.
+3. Set `PRODUCTION_HOST` (the bare hostname) and `MAIN_APP_URL` (the
+   daily report's own public URL) as env vars on `shonrei-report-web`.
+
+**The one thing this genuinely breaks, and how it's fixed:** the admin
+screen's "no separate login" design relied on `sessionStorage` being
+shared with the dashboard because they were the same origin. A different
+subdomain is a different origin -- `sessionStorage` does **not** cross
+that boundary, so without a fix the admin screen would show "sign in
+required" forever, even right after signing in on the dashboard. Fixed
+with a one-time token handoff: the dashboard's "Production admin" link
+now hands the current access token over in a `#token=...` URL fragment
+at click time (fragments are never sent to the server, so it never
+reaches a log), and `production/admin/app.js`'s `importTokenFromUrlFragment()`
+reads it into *this* origin's `sessionStorage` and immediately scrubs it
+from the address bar (`history.replaceState`). Verified locally by
+booting the backend with `PRODUCTION_HOST` set and a Host header
+matching it: the admin app correctly serves at `/`, `/styles.css`
+correctly still resolves to the *shared* base stylesheet (not admin's
+own `admin.css` -- these two used to collide once admin moved to serving
+at root, fixed by renaming admin's page-specific stylesheet), the floor
+app serves at `/floor`, and `/app-config.js` correctly reports the real
+dashboard URL for the "back to dashboard" link.
+
 ## Still not built
 
 - **Real Cin7 calls everywhere they're currently dry-run**: SO backorder

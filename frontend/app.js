@@ -61,6 +61,25 @@
     },
   };
 
+  // Production admin now lives on its own domain (production.shonrei.co.nz,
+  // once PRODUCTION_HOST is configured -- see backend/src/app.js), which
+  // means it's a different origin and can no longer just read this page's
+  // sessionStorage. Hand the current access token over in the URL
+  // fragment instead -- fragments are never sent to the server (so it
+  // never hits a log), and production/admin/app.js reads it once and
+  // scrubs it from the address bar immediately (see its init()).
+  const productionAdminLink = document.getElementById('production-admin-link');
+  if (productionAdminLink && CONFIG.PRODUCTION_APP_URL) {
+    // Plain fallback href (no token) for a middle-click/open-in-new-tab --
+    // lands on the sign-in-required screen there, which is fine.
+    productionAdminLink.href = CONFIG.PRODUCTION_APP_URL;
+    productionAdminLink.addEventListener('click', (e) => {
+      if (!session.access_token) return; // not signed in -- let it fall through to the plain URL
+      e.preventDefault();
+      window.location.href = `${CONFIG.PRODUCTION_APP_URL}#token=${encodeURIComponent(session.access_token)}`;
+    });
+  }
+
   // ---------------------------------------------------------------
   // "Use PIN instead" vault -- localStorage. Distinct from `session`
   // above: this is what survives a closed browser. Deliberately NOT
