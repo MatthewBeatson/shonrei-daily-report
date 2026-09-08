@@ -10,18 +10,25 @@
   <div class="screen">
     <header>
       <h1>Shonrei Production</h1>
-      <button class="scan-again" id="rescanBtn" hidden>Pick another run</button>
+      <button class="scan-again" id="rescanBtn" hidden>Pick another</button>
     </header>
 
-    <!-- Step 1: pick today's open run. QR-scan-to-select is the intended
-         end state (see production/README.md) but isn't wired up for this
-         first concept -- picking from a short real list needs no camera
-         integration and still proves the flow against real data. -->
+    <!-- Step 1: barcode scan or manual code entry against a priority
+         batch (Shonrei's real "sublist"), falling back to a tappable
+         list ordered by priority (oldest SO first). A hardware barcode
+         scanner wedges keystrokes + Enter into whatever text input has
+         focus, so this one field serves both barcode and manual entry
+         with no camera/scanning library needed. -->
     <section class="scan-card" id="scanStep">
-      <div id="runListEmpty">
-        <span class="icon">&#128203;</span>
-        No open runs right now.
+      <div class="scan-input-row">
+        <label for="batchCodeInput">Scan or enter batch code</label>
+        <input type="text" id="batchCodeInput" inputmode="text" autocomplete="off"
+               autocapitalize="characters" placeholder="B-XXXXXX-XXXXXX" autofocus>
       </div>
+      <div id="scanError" class="scan-error" hidden></div>
+
+      <div class="run-list-heading">Or pick from today's priority list</div>
+      <div id="runListEmpty">Loading...</div>
       <div id="runList" hidden></div>
       <div>
         <button id="refreshBtn">Refresh list</button>
@@ -32,6 +39,7 @@
     <section class="run-card" id="confirmStep" hidden>
       <div class="product" id="productName"></div>
       <div class="planned" id="plannedLine"></div>
+      <div class="batch-code" id="batchCodeLine"></div>
 
       <div class="qty-block">
         <label>Actual quantity made</label>
@@ -60,7 +68,7 @@
     <section class="done-card" id="doneStep" hidden>
       <div class="icon">&#10003;</div>
       <p id="doneMessage">Reported. Cin7 will be updated automatically.</p>
-      <button id="doneRescanBtn">Report another run</button>
+      <button id="doneRescanBtn">Report another</button>
     </section>
   </div>
 

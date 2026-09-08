@@ -63,9 +63,9 @@ header .scan-again {
 }
 
 .scan-card {
-  border: 2px dashed var(--border);
+  border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 48px 20px;
+  padding: 24px 20px;
   text-align: center;
   color: var(--gray);
 }
@@ -131,6 +131,36 @@ header .scan-again {
 }
 .done-card .icon { font-size: 3rem; color: var(--green); }
 .done-card p { color: var(--gray); }
+
+.scan-input-row { text-align: left; margin-bottom: 4px; }
+.scan-input-row label { display: block; font-size: 0.85rem; color: var(--gray); margin-bottom: 6px; }
+.scan-input-row input {
+  width: 100%;
+  font-size: 1.3rem;
+  letter-spacing: 0.03em;
+  padding: 16px;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: center;
+}
+.scan-input-row input:focus { border-color: var(--blue); outline: none; }
+.scan-error {
+  color: var(--red);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 8px;
+}
+.run-list-heading {
+  text-align: center;
+  color: var(--gray);
+  font-size: 0.85rem;
+  margin-top: 20px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.batch-code { color: var(--gray); font-size: 0.8rem; margin-top: 2px; font-family: monospace; }
 
 .run-list-item {
   display: flex;

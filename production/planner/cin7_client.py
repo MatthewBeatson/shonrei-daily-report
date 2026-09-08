@@ -98,3 +98,43 @@ class Cin7Client:
         differ from the qty the assembly was created/allocated for.
         """
         raise NotImplementedError("wire against live Cin7 assembly complete endpoint")
+
+    # -- backorder targets (see target_sync.py) ------------------------
+    # A "target" is one long-lived Cin7 assembly per SKU sitting in
+    # Authorised status, whose quantity mirrors total outstanding SO
+    # backorder demand. It is deliberately never Allocated/Completed --
+    # its only job is to make outstanding demand visible inside Cin7
+    # itself. Every method below is still a stub for the same reason as
+    # the rest of this file: exact Cin7 API shapes need confirming
+    # against live data first (see scripts/dump_sample_bom.py). Use
+    # DryRunCin7Client (refresh-service/dry_run_cin7.py) to exercise the
+    # whole flow today without them.
+
+    def create_authorised_assembly(self, sku: str, qty: float) -> Assembly:
+        """Create + Authorise (stages 1-2 only, deliberately no Allocate)
+        for a brand new target."""
+        raise NotImplementedError("wire against live Cin7 assembly create+authorise endpoints")
+
+    def adjust_assembly_qty(self, assembly_id: str, new_qty: float) -> Assembly:
+        """Change an existing Authorised (not yet Allocated) assembly's
+        quantity in place, to match a target's newly-recalculated
+        outstanding demand. If Cin7's API doesn't support an in-place
+        quantity edit on an Authorised assembly, the real implementation
+        falls back to close_assembly() + create_authorised_assembly() --
+        confirm which is true before wiring this for real."""
+        raise NotImplementedError("wire against live Cin7 assembly update endpoint")
+
+    def close_assembly(self, assembly_id: str) -> None:
+        """Cancel a target's assembly once its outstanding_qty reaches
+        zero (policy call: close and recreate later, don't leave a
+        zero-qty assembly open for reuse -- see target_sync.py)."""
+        raise NotImplementedError("wire against live Cin7 assembly cancel endpoint")
+
+    def complete_small_assembly(self, sku: str, qty: float) -> Assembly:
+        """The actual FG-creating call: Create -> Authorise -> Allocate ->
+        Complete, all four stages, for one batch's reported actual
+        quantity. This is the only place in the whole backorder-target
+        flow that a real Cin7 assembly gets completed and stock
+        genuinely moves -- everything upstream (targets, batches) is
+        planning state only."""
+        raise NotImplementedError("wire against live Cin7 assembly create/authorise/allocate/complete endpoints")

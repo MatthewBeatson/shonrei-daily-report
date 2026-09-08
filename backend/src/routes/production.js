@@ -22,6 +22,33 @@ function requireFloorSecret(req, res, next) {
   next();
 }
 
+async function callRefreshService(path, body) {
+  const refreshUrl = process.env.REFRESH_SERVICE_URL;
+  const sharedSecret = process.env.REFRESH_SHARED_SECRET;
+  if (!refreshUrl || !sharedSecret) {
+    throw new ApiError(500, 'Refresh service is not configured (REFRESH_SERVICE_URL / REFRESH_SHARED_SECRET)');
+  }
+  let response;
+  try {
+    response = await fetch(`${refreshUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
+      body: JSON.stringify(body || {}),
+    });
+  } catch (err) {
+    throw new ApiError(502, "Couldn't reach the refresh service -- it may be waking up. Try again in a moment.");
+  }
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new ApiError(502, "Refresh service didn't respond correctly -- it may be waking up. Try again in a moment.");
+  }
+  const data = await response.json();
+  if (!response.ok) {
+    throw new ApiError(response.status, data.error || 'Request failed');
+  }
+  return data;
+}
+
 // Public config for the static floor-app, same pattern as the main
 // frontend's /config.js.
 router.get('/floor-config.js', (req, res) => {
@@ -32,10 +59,63 @@ router.get('/floor-config.js', (req, res) => {
   );
 });
 
-// Runs currently waiting on a floor input -- what the floor app's "pick a
-// run" screen lists. No barcode/QR scanning wired up yet (see
-// production/README.md); this is the "not too much more setup" version --
-// pick from a real, small, currently-open list instead.
+// -- Floor-app routes (X-Floor-Secret, no Supabase login) --------------
+
+// Batches currently issued/planned, ordered by priority (oldest SO
+// first) -- what the floor app's list view shows below the barcode/
+// manual-entry field.
+router.get('/batches/open', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select b.id, b.batch_code, b.qty_planned, b.priority_rank, t.sku
+     from production.production_batches b
+     join production.targets t on t.id = b.target_id
+     where b.status in ('planned', 'issued')
+     order by t.sku, b.priority_rank`
+  );
+  res.json({ batches: rows });
+}));
+
+// Looks up a single batch by its code -- what a barcode scan (or typed
+// entry) resolves to. Barcode scanners wedge keystrokes + Enter into
+// whatever text input has focus, so the floor app just needs one text
+// field wired to this lookup -- no camera/scanning library needed.
+router.get('/batches/by-code/:batchCode', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select b.id, b.batch_code, b.qty_planned, b.priority_rank, b.status, t.sku
+     from production.production_batches b
+     join production.targets t on t.id = b.target_id
+     where b.batch_code = $1`,
+    [req.params.batchCode]
+  );
+  if (!rows[0]) throw new ApiError(404, `No batch found for code "${req.params.batchCode}"`);
+  res.json({ batch: rows[0] });
+}));
+
+// Floor submission: the one human input the whole flow waits on.
+// Proxies to refresh-service, which completes a (currently dry-run)
+// small Cin7 FG assembly for the actual quantity and decrements the
+// parent target -- see refresh-service/backorder_targets.py.
+router.post('/batch-actuals', requireFloorSecret, asyncHandler(async (req, res) => {
+  const { batch_id, actual_qty, reject_qty, reported_via, reported_by } = req.body || {};
+  if (!batch_id || typeof actual_qty !== 'number' || actual_qty < 0) {
+    throw new ApiError(400, 'batch_id and a non-negative numeric actual_qty are required');
+  }
+  if (reported_via && !['barcode', 'manual'].includes(reported_via)) {
+    throw new ApiError(400, "reported_via must be 'barcode' or 'manual'");
+  }
+
+  const data = await callRefreshService(`/production/batches/${batch_id}/actual`, {
+    actual_qty, reject_qty: reject_qty ?? 0,
+    reported_via: reported_via || 'manual', reported_by: reported_by || null,
+  });
+  res.status(201).json(data);
+}));
+
+// -- General multi-level-BOM explosion path (production.production_runs)
+//    -- runs alongside the backorder-target path below, for admin-
+//    triggered replenishment (e.g. min-stock) rather than SO-backorder-
+//    driven demand. See production/README.md. -----------------------
+
 router.get('/runs/open', requireFloorSecret, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, qty_to_build, bom_level, created_at
@@ -46,23 +126,13 @@ router.get('/runs/open', requireFloorSecret, asyncHandler(async (req, res) => {
   res.json({ runs: rows });
 }));
 
-// Floor submission: the one human input the whole flow waits on. Marks
-// the run 'completed' directly -- this concept doesn't call Cin7's
-// Allocate/Complete endpoints yet (see production/planner/orchestrator.py
-// and production/README.md for why that's deliberately deferred), so
-// "completed" here means "actual quantity recorded", not "Cin7 stock
-// relieved".
 router.post('/run-actuals', requireFloorSecret, asyncHandler(async (req, res) => {
   const { run_id, actual_qty, reject_qty, reported_by } = req.body || {};
-
   if (!run_id || typeof actual_qty !== 'number' || actual_qty < 0) {
     throw new ApiError(400, 'run_id and a non-negative numeric actual_qty are required');
   }
 
-  const { rows: runRows } = await pool.query(
-    "select id, status from production.production_runs where id = $1",
-    [run_id]
-  );
+  const { rows: runRows } = await pool.query('select id, status from production.production_runs where id = $1', [run_id]);
   const run = runRows[0];
   if (!run) throw new ApiError(404, 'No such run');
   if (run.status !== 'planned') {
@@ -78,10 +148,7 @@ router.post('/run-actuals', requireFloorSecret, asyncHandler(async (req, res) =>
        returning *`,
       [run_id, actual_qty, reject_qty ?? 0, reported_by ?? null]
     );
-    await client.query(
-      "update production.production_runs set status = 'completed' where id = $1",
-      [run_id]
-    );
+    await client.query("update production.production_runs set status = 'completed' where id = $1", [run_id]);
     await client.query('commit');
     res.status(201).json({ actual: rows[0] });
   } catch (err) {
@@ -91,8 +158,6 @@ router.post('/run-actuals', requireFloorSecret, asyncHandler(async (req, res) =>
     client.release();
   }
 }));
-
-// -- Admin/planner side, same Supabase login as the rest of the report --
 
 router.get('/runs', requireReportAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
@@ -107,35 +172,56 @@ router.get('/runs', requireReportAuth, asyncHandler(async (req, res) => {
 }));
 
 router.post('/plan', requireEdit, asyncHandler(async (req, res) => {
-  const refreshUrl = process.env.REFRESH_SERVICE_URL;
-  const sharedSecret = process.env.REFRESH_SHARED_SECRET;
-  if (!refreshUrl || !sharedSecret) {
-    throw new ApiError(500, 'Refresh service is not configured (REFRESH_SERVICE_URL / REFRESH_SHARED_SECRET)');
-  }
+  const data = await callRefreshService('/production/plan', req.body);
+  res.status(201).json(data);
+}));
 
-  // Demand/BOM/on-hand come in on the request body for this first concept
-  // -- see refresh-service/production_plan.py for why the automatic Cin7
-  // BOM pull isn't wired up yet. The admin UI (not built yet either) would
-  // be what assembles this body; for now it's fine to POST it directly.
-  let response;
-  try {
-    response = await fetch(`${refreshUrl}/production/plan`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
-      body: JSON.stringify(req.body || {}),
-    });
-  } catch (err) {
-    throw new ApiError(502, "Couldn't reach the refresh service -- it may be waking up. Try again in a moment.");
-  }
+// -- Backorder-target / batch (sublist) admin routes, same Supabase
+//    login as the rest of the report --------------------------------
 
-  const contentType = response.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    throw new ApiError(502, "Refresh service didn't respond correctly -- it may be waking up. Try again in a moment.");
+router.get('/targets', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select id, sku, status, outstanding_qty, cin7_assembly_id, created_at, closed_at
+     from production.targets order by status, updated_at desc limit 200`
+  );
+  res.json({ targets: rows });
+}));
+
+router.get('/targets/:targetId/demand-lines', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select so_number, order_date, qty_backordered, priority_rank
+     from production.target_demand_lines where target_id = $1 order by priority_rank`,
+    [req.params.targetId]
+  );
+  res.json({ demand_lines: rows });
+}));
+
+router.get('/batches', requireReportAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select b.id, b.batch_code, b.qty_planned, b.priority_rank, b.status, b.created_at,
+            t.sku, a.actual_qty, a.reject_qty, a.reported_via, a.reported_at
+     from production.production_batches b
+     join production.targets t on t.id = b.target_id
+     left join production.batch_actuals a on a.batch_id = b.id
+     order by b.created_at desc limit 200`
+  );
+  res.json({ batches: rows });
+}));
+
+// Body: {"demand_lines_by_sku": {sku: [{so_number, order_date, qty_backordered}, ...]}}
+// See refresh-service/backorder_targets.py -- demand extraction from live
+// Cin7 SOs isn't wired in yet, so this is supplied directly for now.
+router.post('/targets/sync', requireEdit, asyncHandler(async (req, res) => {
+  const data = await callRefreshService('/production/targets/sync', req.body);
+  res.status(200).json(data);
+}));
+
+router.post('/targets/:targetId/plan-batches', requireEdit, asyncHandler(async (req, res) => {
+  const { suggested_run_size } = req.body || {};
+  if (!suggested_run_size || suggested_run_size <= 0) {
+    throw new ApiError(400, 'suggested_run_size must be a positive number');
   }
-  const data = await response.json();
-  if (!response.ok) {
-    throw new ApiError(response.status, data.error || 'Planning failed');
-  }
+  const data = await callRefreshService(`/production/targets/${req.params.targetId}/plan-batches`, { suggested_run_size });
   res.status(201).json(data);
 }));
 

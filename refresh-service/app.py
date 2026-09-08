@@ -26,6 +26,9 @@ from flask import Flask, request, jsonify
 from daily_refresh_supabase import get_conn, run_refresh, load_settings
 from dispatch_plan_run import run_dispatch_plan
 from production_plan import ProductionPlanError, run_production_plan
+from backorder_targets import sync_targets, apply_batch_actual
+from batch_staging import stage_batches_for_target
+from dry_run_cin7 import DryRunCin7Client
 
 app = Flask(__name__)
 
@@ -170,6 +173,91 @@ def production_plan():
         conn.close()
 
     return jsonify(plan), 200
+
+
+@app.post('/production/targets/sync')
+def production_targets_sync():
+    """Body: {"demand_lines_by_sku": {sku: [{"so_number","order_date","qty_backordered"}, ...]}}.
+    Demand extraction from live Cin7 SOs isn't wired in yet (see
+    backorder_targets.extract_demand_lines) -- for now the caller supplies
+    it directly, same "live concept, Cin7 reads deferred" approach as
+    /production/plan. Runs against DryRunCin7Client so no real Cin7
+    assembly is touched (see dry_run_cin7.py).
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    demand_lines_by_sku = payload.get('demand_lines_by_sku') or {}
+
+    conn = get_conn()
+    try:
+        results = sync_targets(conn, DryRunCin7Client(conn), demand_lines_by_sku)
+    finally:
+        conn.close()
+
+    return jsonify({'actions': results}), 200
+
+
+@app.post('/production/targets/<target_id>/plan-batches')
+def production_plan_batches(target_id):
+    """Body: {"suggested_run_size": 50}. Splits the target's current
+    priority-ordered demand into batches (production.production_batches).
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    run_size = payload.get('suggested_run_size')
+    if not run_size or run_size <= 0:
+        return jsonify({'error': 'suggested_run_size must be a positive number'}), 400
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("select sku from production.targets where id = %s and status = 'active'", (target_id,))
+            row = cur.fetchone()
+        if row is None:
+            return jsonify({'error': 'No such active target'}), 404
+        (sku,) = row
+        batches = stage_batches_for_target(conn, target_id, sku, run_size)
+    finally:
+        conn.close()
+
+    return jsonify({'batches': batches}), 201
+
+
+@app.post('/production/batches/<batch_id>/actual')
+def production_batch_actual(batch_id):
+    """Body: {"actual_qty", "reject_qty", "reported_via", "reported_by"}.
+    The floor-input endpoint's backend: completes a real (today: dry-run)
+    small Cin7 assembly and decrements the parent target. Called by the
+    Node backend's POST /production/batch-actuals, not directly by the
+    floor app -- see backend/src/routes/production.js.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+    actual_qty = payload.get('actual_qty')
+    if actual_qty is None or actual_qty < 0:
+        return jsonify({'error': 'actual_qty must be a non-negative number'}), 400
+
+    conn = get_conn()
+    try:
+        try:
+            result = apply_batch_actual(
+                conn, DryRunCin7Client(conn), batch_id,
+                actual_qty, payload.get('reject_qty') or 0,
+                payload.get('reported_via') or 'manual', payload.get('reported_by'),
+            )
+        except ValueError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 409
+    finally:
+        conn.close()
+
+    return jsonify(result), 201
 
 
 if __name__ == '__main__':
