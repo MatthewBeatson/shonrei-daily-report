@@ -326,25 +326,41 @@ router.post('/warehouse/putaway-scans', requireFloorSecret, asyncHandler(async (
 }));
 
 // Admin: locations list/create, SKU-to-home-location assignment, and the
-// putaway scan log (mismatches are the point of reviewing this).
+// putaway scan log (mismatches are the point of reviewing this). A
+// location can hold several SKUs at once (separate containers sharing a
+// shelf), so this aggregates every assigned SKU into one array per
+// location rather than one row per (location, SKU) pair.
 router.get('/warehouse/locations', requireReportAuth, asyncHandler(async (req, res) => {
+  const params = [];
+  let where = '';
+  if (req.query.stock_type) {
+    params.push(req.query.stock_type);
+    where = 'where l.stock_type = $1';
+  }
   const { rows } = await pool.query(
-    `select l.id, l.code, l.description, l.created_at, sl.sku as current_sku
+    `select l.id, l.code, l.description, l.stock_type, l.created_at,
+            coalesce(array_agg(sl.sku) filter (where sl.sku is not null), '{}') as current_skus
      from warehouse.locations l
      left join warehouse.sku_locations sl on sl.location_id = l.id
-     order by l.code`
+     ${where}
+     group by l.id
+     order by l.code`,
+    params
   );
   res.json({ locations: rows });
 }));
 
 router.post('/warehouse/locations', requireEdit, asyncHandler(async (req, res) => {
-  const { code, description } = req.body || {};
+  const { code, description, stock_type } = req.body || {};
   if (!code) throw new ApiError(400, 'code is required');
+  if (stock_type && !['RM', 'SA', 'FP'].includes(stock_type)) {
+    throw new ApiError(400, "stock_type must be 'RM', 'SA', or 'FP'");
+  }
   const { rows } = await pool.query(
-    `insert into warehouse.locations (code, description) values ($1, $2)
-     on conflict (code) do update set description = excluded.description
+    `insert into warehouse.locations (code, description, stock_type) values ($1, $2, $3)
+     on conflict (code) do update set description = excluded.description, stock_type = excluded.stock_type
      returning *`,
-    [code, description || null]
+    [code, description || null, stock_type || null]
   );
   res.status(201).json({ location: rows[0] });
 }));

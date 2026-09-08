@@ -291,16 +291,20 @@ async function pushAdjustment(countId, sku) {
 async function loadLocations() {
   const tbody = document.getElementById('locations-tbody');
   const empty = document.getElementById('locations-empty');
+  const stockType = document.getElementById('locations-filter').value;
   try {
-    const { locations } = await api('/production/warehouse/locations');
+    const qs = stockType ? `?stock_type=${encodeURIComponent(stockType)}` : '';
+    const { locations } = await api(`/production/warehouse/locations${qs}`);
     tbody.innerHTML = '';
     empty.hidden = locations.length > 0;
     for (const loc of locations) {
       const tr = document.createElement('tr');
+      const skusText = loc.current_skus && loc.current_skus.length ? loc.current_skus.join(', ') : '—';
       tr.innerHTML = `
         <td>${escapeHtml(loc.code)}</td>
+        <td>${escapeHtml(loc.stock_type || '—')}</td>
         <td>${escapeHtml(loc.description || '—')}</td>
-        <td>${escapeHtml(loc.current_sku || '—')}</td>
+        <td>${escapeHtml(skusText)}</td>
         <td class="narrow"></td>
         <td class="narrow"></td>
       `;
@@ -336,15 +340,17 @@ async function loadLocations() {
 async function addLocation() {
   const code = document.getElementById('new-location-code').value.trim();
   const description = document.getElementById('new-location-description').value.trim();
+  const stockType = document.getElementById('new-location-stock-type').value;
   if (!code) { setError('Enter a location code first.'); return; }
   setError('');
   try {
     await api('/production/warehouse/locations', {
       method: 'POST',
-      body: JSON.stringify({ code, description: description || null }),
+      body: JSON.stringify({ code, description: description || null, stock_type: stockType || null }),
     });
     document.getElementById('new-location-code').value = '';
     document.getElementById('new-location-description').value = '';
+    document.getElementById('new-location-stock-type').value = '';
     setSuccess(`Added location ${code}.`);
     await loadLocations();
   } catch (err) {
@@ -402,6 +408,7 @@ document.getElementById('refresh-targets-btn').addEventListener('click', loadTar
 document.getElementById('refresh-batches-btn').addEventListener('click', loadBatches);
 document.getElementById('refresh-stocktake-btn').addEventListener('click', loadStocktake);
 document.getElementById('refresh-locations-btn').addEventListener('click', loadLocations);
+document.getElementById('locations-filter').addEventListener('change', loadLocations);
 document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);

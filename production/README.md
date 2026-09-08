@@ -73,6 +73,7 @@ production/
     008_backorder_targets_and_batches.sql       Backorder path (targets, batches)
     009_stocktake.sql                           Stocktake (stocktake.counts)
     010_warehouse_locations.sql                 Locations + putaway (warehouse.*)
+    011_location_stock_type.sql                 warehouse.locations.stock_type (RM/SA/FP)
 ```
 
 ## How the CAAC automation works
@@ -268,32 +269,43 @@ count correctly returns 409.
 
 ## Labels & warehouse locations
 
-Three barcode types, and a fix for "product placed anywhere":
+Shonrei's real layout: fixed shelves/areas for RM (raw material), SA
+(sub-assembly), and FP (finished product), with containers on those
+shelves that just carry product around -- the container itself has no
+identity worth tracking, only **which shelf/area** matters. Three barcode
+types, and a fix for "product placed anywhere" that matches that layout:
 
 1. **SKU barcode** -- one per SKU, generated once, printed **identically
-   everywhere that SKU needs identifying**: on a bin/location label's
-   "what belongs here" line, and directly onto the product itself as its
-   own label. Same Code128 payload (the literal SKU text) both places --
-   no reason to mint two different codes for one SKU, and doing so would
-   just be something else to keep in sync.
-2. **Location barcode** -- one per bin, completely independent of
-   whichever SKU currently lives there. A bin's code doesn't move when
-   the product does, and a bin gets reassigned to a different SKU over
-   time -- so it needs its own fixed code, not a code derived from the
-   product.
+   everywhere that SKU needs identifying**: stuck straight onto the
+   product (or its container), and printed on its own whenever admin
+   downloads a SKU label. Same Code128 payload (the literal SKU text)
+   every time -- no reason to mint two different codes for one SKU, and
+   doing so would just be something else to keep in sync.
+2. **Location barcode** -- one per shelf/area, completely independent of
+   whichever SKU(s) currently live there. A shelf's code doesn't move
+   when product does, and Shonrei's shelves/areas routinely hold several
+   different SKUs at once in separate containers -- so the shelf label
+   deliberately does **not** try to show "the" SKU there (there often
+   isn't one); it prints the location barcode plus its stock type
+   (RM/SA/FP) as plain readable text, nothing more.
 3. **Batch barcode** -- already existed (`batch_code`, see "Backorder
    targets and batches" above); this is what gets printed onto a sticker
    and travels with a physical run through the factory, the direct fix
    for production runs having no physical identifier.
 
+**What actually catches a misplaced product is the scan, not the printed
+label.** Since a shared shelf's label can't encode "the" SKU, the
+Putaway tab does the real check: scan the product's own SKU barcode,
+scan the shelf's barcode, and the app looks up whether that pairing is
+in `warehouse.sku_locations` -- no need for the label itself to carry
+that information.
+
 **Zebra/ZPL, not a barcode-image library.** Zebra printers render
 Code128 barcodes natively from ZPL text commands (`^BC`), so
 `production/planner/labels.py` just generates that text -- no
 barcode-rendering library anywhere in this app, on either the server or
-client side. `sku_label_zpl`, `location_label_zpl` (which pulls in the
-SKU barcode wholesale if one's assigned to that bin) and
-`batch_label_zpl` are pure string templating, unit tested the same way
-as `bom_explode.py`.
+client side. `sku_label_zpl`, `location_label_zpl`, and `batch_label_zpl`
+are pure string templating, unit tested the same way as `bom_explode.py`.
 
 **Getting the ZPL to the physical printer is deliberately left as a
 download, not a network push.** This repo doesn't know whether the
@@ -310,28 +322,35 @@ port-9100 listener is a small, contained change to `_zpl_response` in
 confirmed, not guessed at now.
 
 **The "product placed anywhere" fix, specifically:** every SKU gets one
-designated home location (`warehouse.sku_locations` -- deliberately the
+designated home shelf/area (`warehouse.sku_locations` -- deliberately the
 simplest model, not a full multi-bin quantity-tracking WMS, see
-migration 010's comments for why). The floor app's Putaway tab is a
-two-scan confirmation: scan the product's SKU barcode, then scan the
-bin's own location barcode, and get told immediately whether they match
-(`production/planner/putaway.py`, pure logic, unit tested). Every scan is
-logged either way (`warehouse.putaway_scans`) -- a match, a mismatch, or
-"this SKU has no home location assigned yet" are all recorded, and the
-admin screen's PUTAWAY SCANS table surfaces the mismatches, which is the
-entire point of scanning in the first place.
+migration 010's comments for why; several SKUs can share one shelf, a
+shelf just can't be "the" SKU's-worth of barcode on its own label). The
+floor app's Putaway tab is a two-scan confirmation: scan the product's
+SKU barcode, then scan the shelf's own location barcode, and get told
+immediately whether they match (`production/planner/putaway.py`, pure
+logic, unit tested). Every scan is logged either way
+(`warehouse.putaway_scans`) -- a match, a mismatch, or "this SKU has no
+home location assigned yet" are all recorded, and the admin screen's
+PUTAWAY SCANS table surfaces the mismatches, which is the entire point
+of scanning in the first place. `warehouse.locations.stock_type`
+(RM/SA/FP, migration 011) is a real filterable field, not just a naming
+convention baked into location codes -- the admin screen's WAREHOUSE
+LOCATIONS table can filter to just one type.
 
 **Verified locally, real HTTP, real Postgres:** generated real ZPL for
-all three label types (confirmed a location label picks up the currently-
-assigned SKU's barcode automatically once one's set, same payload as
-that SKU's own label), assigned a home location, then drove three
-putaway scans through the real floor-app endpoints: a correct scan
-(matched), a wrong-bin scan against the same SKU (mismatch, correctly
-reporting the expected location), and a scan for a SKU with no home
-location yet (correctly recorded with `matched: null`, not a false
-mismatch). Confirmed the batch-label download route accepts both the
-floor secret and an admin bearer token (it's printed from both apps) and
-correctly 401s with neither.
+all three label types, confirmed a shared shelf assigned to two
+different SKUs prints a label with only the location barcode and its
+stock type (no attempt at a "current SKU" barcode), confirmed both SKUs
+independently check out as a match against that same shelf on a putaway
+scan, and confirmed the admin locations listing aggregates every SKU
+assigned to a shelf into one row (not one duplicated row per SKU).
+Separately verified a wrong-bin scan (mismatch, correctly reporting the
+expected location) and a scan for a SKU with no home location yet
+(correctly recorded with `matched: null`, not a false mismatch), and
+that the batch-label download route accepts both the floor secret and an
+admin bearer token (it's printed from both apps) and correctly 401s with
+neither.
 
 ## Live concept -- what actually runs today
 
@@ -385,7 +404,8 @@ piece (writing to live Cin7 inventory) until the rest is proven:
 
 **To try it locally:** run all four migrations in order
 (`007_production_schema.sql`, `008_...sql`, `009_stocktake.sql`,
-`010_warehouse_locations.sql`, each via `python scripts/run_migration.py`)
+`010_warehouse_locations.sql`, `011_location_stock_type.sql`, each via
+`python scripts/run_migration.py`)
 against your `.env`, set `FLOOR_APP_SHARED_SECRET` in both
 `backend/.env` and wherever `refresh-service` runs, start both services,
 then open `/production-floor/` for the floor app (Batches, Stocktake, or

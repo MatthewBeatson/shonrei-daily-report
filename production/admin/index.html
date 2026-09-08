@@ -126,29 +126,44 @@
       <div class="section-header">WAREHOUSE LOCATIONS</div>
       <div class="section-body">
         <p class="sub">
-          One barcode per bin (its location code) and one barcode per SKU
-          (reused verbatim on the SKU's own product label). Assigning a
-          SKU's home location here is what the floor app's Putaway tab
-          checks a scan against -- see production/README.md.
+          One barcode per shelf/area (its location code) and one barcode
+          per SKU (reused verbatim on the SKU's own product label) -- a
+          shelf's label never shows "the" SKU there since a shelf commonly
+          holds several at once (separate containers), just its stock
+          type. Assigning a SKU's home location here is what the floor
+          app's Putaway tab checks a scan against -- see production/README.md.
         </p>
 
         <div class="admin-toolbar">
-          <input type="text" id="new-location-code" placeholder="Location code, e.g. A-03-02" style="max-width:180px;">
-          <input type="text" id="new-location-description" placeholder="Description (optional)" style="max-width:220px;">
+          <input type="text" id="new-location-code" placeholder="Location code, e.g. RM-A1" style="max-width:150px;">
+          <input type="text" id="new-location-description" placeholder="Description (optional)" style="max-width:200px;">
+          <select id="new-location-stock-type">
+            <option value="">Stock type</option>
+            <option value="RM">RM</option>
+            <option value="SA">SA</option>
+            <option value="FP">FP</option>
+          </select>
           <button class="btn-primary" id="add-location-btn">Add location</button>
+        </div>
+
+        <div class="admin-toolbar">
+          <label for="locations-filter" class="sub" style="margin:0;">Filter:</label>
+          <select id="locations-filter">
+            <option value="">All</option>
+            <option value="RM">RM</option>
+            <option value="SA">SA</option>
+            <option value="FP">FP</option>
+          </select>
+          <button class="btn-primary" id="refresh-locations-btn">Refresh</button>
         </div>
 
         <table class="overrides-table" id="locations-table">
           <thead>
-            <tr><th>Code</th><th>Description</th><th>Current SKU</th><th>Assign SKU</th><th>Label</th></tr>
+            <tr><th>Code</th><th>Type</th><th>Description</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
           </thead>
           <tbody id="locations-tbody"></tbody>
         </table>
         <div class="sub" id="locations-empty" hidden>No locations yet -- add one above.</div>
-
-        <div class="admin-toolbar">
-          <button class="btn-primary" id="refresh-locations-btn">Refresh</button>
-        </div>
 
         <p class="sub" style="margin-top:16px;">Print a product/SKU label directly (same barcode as any bin it's assigned to):</p>
         <div class="admin-toolbar">

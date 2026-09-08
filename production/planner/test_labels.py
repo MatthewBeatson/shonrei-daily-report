@@ -30,20 +30,22 @@ class SkuLabelZplTests(unittest.TestCase):
 
 
 class LocationLabelZplTests(unittest.TestCase):
-    def test_location_code_is_the_primary_barcode(self):
+    def test_location_code_is_the_only_barcode(self):
+        # Shelves commonly hold several different SKUs at once, so the
+        # label never tries to show "the" current SKU -- only one
+        # barcode field, ever.
         zpl = location_label_zpl('A-03-02')
         self.assertIn('^FDA-03-02^FS', zpl)
+        self.assertEqual(zpl.count('^BCN,'), 1)
 
-    def test_no_sku_block_when_bin_is_unassigned(self):
+    def test_no_stock_type_line_when_omitted(self):
         zpl = location_label_zpl('A-03-02')
-        self.assertNotIn('Current SKU', zpl)
+        self.assertNotIn('A0N,28,28', zpl)
 
-    def test_sku_block_present_and_reuses_sku_barcode_payload(self):
-        zpl = location_label_zpl('A-03-02', current_sku='FG-2400-BOX')
-        self.assertIn('Current SKU', zpl)
-        self.assertIn('^FDFG-2400-BOX^FS', zpl)
-        # two distinct barcode fields on one label -- location and SKU
-        self.assertEqual(zpl.count('^BCN,'), 2)
+    def test_stock_type_printed_as_plain_text_not_a_barcode(self):
+        zpl = location_label_zpl('A-03-02', stock_type='RM')
+        self.assertIn('^FDRM^FS', zpl)
+        self.assertEqual(zpl.count('^BCN,'), 1)  # still just the one barcode
 
 
 class BatchLabelZplTests(unittest.TestCase):

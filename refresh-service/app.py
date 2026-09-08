@@ -389,27 +389,25 @@ def label_sku(sku):
 
 @app.get('/labels/location/<path:location_code>')
 def label_location(location_code):
-    """Two independent barcodes on one label: the location's own fixed
-    code, and (if assigned) the SKU currently designated to live there --
-    reused verbatim from label_sku, not a new code."""
+    """Shelf/area label: its own fixed barcode, plus its stock type
+    (RM/SA/FP) as plain text if set -- no "current SKU" barcode, since a
+    shelf here commonly holds several different SKUs at once. See
+    labels.location_label_zpl for why."""
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
 
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """select sl.sku from warehouse.sku_locations sl
-                   join warehouse.locations l on l.id = sl.location_id
-                   where l.code = %s""",
-                (location_code,),
-            )
+            cur.execute("select stock_type from warehouse.locations where code = %s", (location_code,))
             row = cur.fetchone()
     finally:
         conn.close()
-    current_sku = row[0] if row else None
+    if row is None:
+        return jsonify({'error': 'No such location'}), 404
+    stock_type = row[0]
 
-    zpl = location_label_zpl(location_code, current_sku=current_sku)
+    zpl = location_label_zpl(location_code, stock_type=stock_type)
     return _zpl_response(zpl, f'location-{location_code}.zpl')
 
 

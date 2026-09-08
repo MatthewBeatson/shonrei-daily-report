@@ -52,29 +52,29 @@ def sku_label_zpl(sku: str, description: str | None = None) -> str:
     )
 
 
-def location_label_zpl(location_code: str, current_sku: str | None = None) -> str:
-    """Bin/location label -- TWO independent barcodes, not one combined
-    code: the location's own fixed barcode (top), and, if a SKU is
-    currently assigned as this bin's home, that SKU's barcode underneath
-    (bottom) -- the same SKU barcode reused, not a new one. Printing both
-    on one label is what actually catches a misplaced product: scan the
-    bin, scan the product, the app can see they don't agree even if a
-    human glancing at the shelf wouldn't notice.
+def location_label_zpl(location_code: str, stock_type: str | None = None) -> str:
+    """Shelf/area label -- its own fixed barcode, completely independent
+    of which SKU(s) currently sit there. Shonrei's shelves/areas commonly
+    hold several different SKUs at once (in separate containers), so this
+    label deliberately does NOT try to show "the" current SKU -- there
+    isn't one. What catches a misplaced product is the *scan*, not the
+    printed label: the floor app's Putaway tab scans the product's own
+    SKU barcode (wherever that's printed -- the container or the product
+    itself) and this location's barcode, and checks the pairing against
+    warehouse.sku_locations -- see putaway.py.
+
+    `stock_type` (RM / SA / FP) is printed as plain readable text, not a
+    barcode -- it's there so someone glancing at a shelf can tell what
+    kind of stock belongs on it, purely a human aid.
     """
     location_code = _escape_zpl_text(location_code)
-    sku_block = ""
-    if current_sku:
-        sku = _escape_zpl_text(current_sku)
-        sku_block = (
-            "^FO40,240^A0N,28,28^FDCurrent SKU^FS\n"
-            f"^FO40,280^BY2\n^BCN,100,Y,N,N\n^FD{sku}^FS\n"
-        )
+    type_line = f"^FO40,240^A0N,28,28^FD{_escape_zpl_text(stock_type)}^FS\n" if stock_type else ""
     return (
         "^XA\n"
         f"^PW{LABEL_WIDTH_DOTS}\n^LL{LABEL_HEIGHT_DOTS}\n"
         "^FO40,20^A0N,36,36^FDLOCATION^FS\n"
         f"^FO40,70^BY3\n^BCN,140,Y,N,N\n^FD{location_code}^FS\n"
-        f"{sku_block}"
+        f"{type_line}"
         "^XZ\n"
     )
 
