@@ -25,7 +25,12 @@ Confirmed against a live account already (see production/README.md):
   - The line shape inside a populated BillOfMaterialsProducts is also
     documented (the "Bill Of Material Product Model" under "Other
     Models"): ComponentProductID, ProductCode, Quantity,
-    WastagePercent/WastageQuantity, CostPercentage.
+    WastagePercent/WastageQuantity, CostPercentage -- and now confirmed
+    live too: a run against SKU WIPMT20T (2026-09-09, with
+    IncludeBOM=true) came back with 4 real component lines in exactly
+    this shape, plus a sibling BillOfMaterialsServices array of
+    labour/service lines (not modelled by get_bom -- not needed, since
+    bom_explode only cares about physical components).
   - GET /ExternalApi/v2/ref/productavailability?SKU=<sku> is real and
     gives OnHand / Allocated / Available (= OnHand - Allocated) / OnOrder.
   - Guessed /bom, /product/availability, /productavailability,

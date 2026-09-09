@@ -34,6 +34,31 @@ REAL_AVAILABILITY_RESPONSE = {
     }],
 }
 
+# Captured live via scripts/dump_sample_bom.py WIPMT20T (2026-09-09), with
+# IncludeBOM=true -- the actual fix confirmed for real, not just from docs.
+# Trimmed to the fields get_bom touches; BillOfMaterialsServices (labour/
+# service lines) is real too but get_bom/bom_explode don't model it.
+REAL_PRODUCT_RESPONSE_WITH_BOM_LINES = {
+    "Total": 1, "Page": 1,
+    "Products": [{
+        "ID": "54a590e2-eee8-4b63-b5e9-02186cd3c77e",
+        "SKU": "WIPMT20T",
+        "BillOfMaterial": True,
+        "BOMType": "Assembly",
+        "QuantityToProduce": 180.0,
+        "BillOfMaterialsProducts": [
+            {"ComponentProductID": "409e4427-3d03-4d51-90b2-146c8b26060f", "ProductCode": "RMFPE6BK", "Name": "FOAM PE30 6mm BLACK", "Quantity": 5.0, "WastagePercent": 0.0, "WastageQuantity": 0.0, "CostPercentage": 0.0},
+            {"ComponentProductID": "078aabfc-7e7a-45c6-8833-94499b6fb30a", "ProductCode": "RMAD1181", "Name": "BOSTIK 1181S", "Quantity": 0.04, "WastagePercent": 0.0, "WastageQuantity": 0.0, "CostPercentage": 0.0},
+            {"ComponentProductID": "4c31b32e-d483-4c4f-9d9f-5b42dcc72313", "ProductCode": "RMC-400-NS", "Name": "CARD 400UM 510x253mm", "Quantity": 90.0, "WastagePercent": 0.0, "WastageQuantity": 0.0, "CostPercentage": 0.0},
+            {"ComponentProductID": "557cebd8-2976-4c89-9acc-49f3baa1e514", "ProductCode": "RMT195", "Name": "T195 METAL TRAY", "Quantity": 180.0, "WastagePercent": 0.0, "WastageQuantity": 0.0, "CostPercentage": 0.0},
+        ],
+        "BillOfMaterialsServices": [
+            {"ComponentProductID": "f1bb3d21-0f1b-4c8c-90d7-ab7c4b77a80e", "Name": "LABOUR - Gluing Room", "Quantity": 4.0, "ExpenseAccount": "222/00A", "PriceTier": 1},
+            {"ComponentProductID": "1196e932-d2fd-4932-9761-7783fbc90183", "Name": "LABOUR - FACTORY", "Quantity": 1.0, "ExpenseAccount": "222/00A", "PriceTier": 1},
+        ],
+    }],
+}
+
 
 def _mock_response(json_body):
     resp = MagicMock()
@@ -91,9 +116,7 @@ class GetBomTests(unittest.TestCase):
         # Shape confirmed from Cin7's own published API docs (the "Bill
         # Of Material Product Model" -- ComponentProductID, ProductCode,
         # Quantity, WastagePercent/WastageQuantity, CostPercentage), not
-        # a guess -- see get_bom's docstring. Still not seen populated in
-        # a live GET /product response, so this fixture is what the docs
-        # say to expect, not yet what's been observed.
+        # a guess -- see get_bom's docstring.
         response = {
             "Total": 1, "Page": 1,
             "Products": [{
@@ -110,6 +133,22 @@ class GetBomTests(unittest.TestCase):
         self.assertEqual(bom, [
             {'component_sku': 'RAW-CARDBOARD', 'qty_per': 2.0},
             {'component_sku': 'RAW-HINGE', 'qty_per': 4.0},
+        ])
+
+    @patch('cin7_client.requests.get')
+    def test_real_live_bom_lines_for_wipmt20t_map_correctly(self, mock_get):
+        # The actual confirmation: WIPMT20T is a genuine Shonrei assembly,
+        # this is IncludeBOM=true's real response (captured via
+        # scripts/dump_sample_bom.py on 2026-09-09), not the docs or a
+        # synthetic fixture. Closes out the "not yet seen live" caveat
+        # that used to sit on get_bom.
+        mock_get.return_value = _mock_response(REAL_PRODUCT_RESPONSE_WITH_BOM_LINES)
+        bom = self.client.get_bom('WIPMT20T')
+        self.assertEqual(bom, [
+            {'component_sku': 'RMFPE6BK', 'qty_per': 5.0},
+            {'component_sku': 'RMAD1181', 'qty_per': 0.04},
+            {'component_sku': 'RMC-400-NS', 'qty_per': 90.0},
+            {'component_sku': 'RMT195', 'qty_per': 180.0},
         ])
 
     @patch('cin7_client.requests.get')

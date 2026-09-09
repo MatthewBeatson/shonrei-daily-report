@@ -12,10 +12,18 @@ docs alone).
 
 Confirmed against a live account (see `scripts/dump_sample_bom.py`'s
 output, and `production/README.md`):
-    GET /ExternalApi/v2/product?SKU=<sku>             product record,
-        including BillOfMaterial/BOMType/QuantityToProduce and the BOM
-        lines themselves under BillOfMaterialsProducts. NOT a separate
-        /bom endpoint -- BOM-ness lives on the product record.
+    GET /ExternalApi/v2/product?SKU=<sku>&IncludeBOM=true    product
+        record, including BillOfMaterial/BOMType/QuantityToProduce and
+        the BOM lines themselves under BillOfMaterialsProducts (only
+        populated with IncludeBOM=true -- without it the array comes
+        back empty even for a real assembly). NOT a separate /bom
+        endpoint -- BOM-ness lives on the product record. Confirmed
+        live for a real assembly with real components (SKU WIPMT20T,
+        2026-09-09) -- BillOfMaterialsProducts came back with 4 real
+        component lines shaped exactly as get_bom expects
+        (ComponentProductID, ProductCode, Quantity,
+        WastagePercent/WastageQuantity, CostPercentage), not just from
+        the docs.
     GET /ExternalApi/v2/ref/productavailability?SKU=<sku>   on-hand
         (OnHand), allocated (Allocated), and Cin7's own netted figure
         (Available = OnHand - Allocated) per SKU. NOT
@@ -24,12 +32,11 @@ output, and `production/README.md`):
         404 status for an unknown path, see dump_sample_bom.py's
         safe_json()).
 
-Still stubbed, needs its own confirm-first pass before use:
-    the assembly create/authorise/allocate/complete/cancel endpoints,
-    and the exact field names inside a *populated* BillOfMaterialsProducts
-    line (every SKU checked so far had an empty array -- get_bom's
-    mapping below is a best-effort guess, not confirmed, see its
-    docstring).
+The whole Cin7-read side (get_bom, get_availability, get_stock_on_hand)
+is now confirmed against live data. Still stubbed, needs its own
+confirm-first pass before use: the assembly
+create/authorise/allocate/complete/cancel endpoints, get_open_assemblies,
+and adjust_stock_on_hand.
 """
 from __future__ import annotations
 import os
@@ -104,23 +111,28 @@ class Cin7Client:
         components, or the explosion would silently treat it as a raw
         material and never build it.
 
-        Line shape is confirmed from Cin7's own published API docs (the
-        "Bill Of Material Product Model", https://dearinventory.docs.apiary.io/
-        -- ComponentProductID, ProductCode, Quantity, WastagePercent/
-        WastageQuantity, CostPercentage), not a guess. GET /product is
-        deliberately lean by default -- BillOfMaterialsProducts (and
-        Suppliers/Movements/Attachments/etc.) only populate with
-        IncludeBOM=true (also from the docs -- this is why every earlier
-        attempt came back with an empty array even for a real assembly),
-        which _get_product passes here.
+        Line shape is confirmed both from Cin7's own published API docs
+        (the "Bill Of Material Product Model",
+        https://dearinventory.docs.apiary.io/ -- ComponentProductID,
+        ProductCode, Quantity, WastagePercent/WastageQuantity,
+        CostPercentage) and from a real live response: SKU WIPMT20T
+        (2026-09-09) came back with 4 real BillOfMaterialsProducts lines
+        matching this exact shape, plus a sibling BillOfMaterialsServices
+        array of labour/service lines this method doesn't model (not
+        needed by bom_explode, which only cares about physical
+        components). GET /product is deliberately lean by default --
+        BillOfMaterialsProducts (and Suppliers/Movements/Attachments/
+        etc.) only populate with IncludeBOM=true (this is why every
+        earlier attempt came back with an empty array even for a real
+        assembly), which _get_product passes here.
 
-        Not yet seen live: whether IncludeBOM=true actually populates
-        BillOfMaterialsProducts for a real assembly -- confirmed from the
-        docs, not yet from a real response. Kept defensive until that's
-        seen for real: an assembly SKU with an empty
-        BillOfMaterialsProducts still raises rather than silently
-        returning [] (bom_explode would treat that as "this is a raw
-        material, nothing to build" -- wrong for a real assembly).
+        The empty-array-on-a-real-assembly branch below (raising
+        NotImplementedError instead of returning []) is now believed
+        unreachable in practice -- confirmed live data always populated
+        the lines once IncludeBOM=true was set. Left in place anyway as
+        a safety net: if some other real assembly SKU ever comes back
+        with genuinely empty lines, that must never be silently read as
+        "nothing to build".
         """
         product = self._get_product(sku, include_bom=True)
         lines = product.get("BillOfMaterialsProducts") or []
