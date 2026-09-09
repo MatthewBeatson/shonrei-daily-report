@@ -47,13 +47,16 @@ class GetBomTests(unittest.TestCase):
         self.client = Cin7Client(account_id='x', api_key='y')
 
     @patch('cin7_client.requests.get')
-    def test_hits_the_confirmed_product_endpoint(self, mock_get):
+    def test_hits_the_confirmed_product_endpoint_with_include_bom(self, mock_get):
+        # IncludeBOM=true is required (confirmed from Cin7's docs) --
+        # without it BillOfMaterialsProducts comes back empty even for a
+        # real assembly, see get_bom's docstring.
         mock_get.return_value = _mock_response(REAL_PRODUCT_RESPONSE_NO_BOM_LINES)
         with self.assertRaises(NotImplementedError):
             self.client.get_bom('WIPMT20T')
         args, kwargs = mock_get.call_args
         self.assertIn('/product', args[0])
-        self.assertEqual(kwargs['params'], {'SKU': 'WIPMT20T'})
+        self.assertEqual(kwargs['params'], {'SKU': 'WIPMT20T', 'IncludeBOM': 'true'})
 
     @patch('cin7_client.requests.get')
     def test_empty_bom_lines_on_a_real_assembly_raises_not_wired(self, mock_get):

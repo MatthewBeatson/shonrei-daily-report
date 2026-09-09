@@ -65,10 +65,19 @@ class Cin7Client:
 
     # -- reads, used by bom_explode's caller to build its inputs -------
 
-    def _get_product(self, sku: str) -> dict:
-        resp = requests.get(
-            f"{CIN7_BASE_URL}/product", headers=self._headers(), params={"SKU": sku}, timeout=60,
-        )
+    def _get_product(self, sku: str, *, include_bom: bool = False) -> dict:
+        # GET /product is deliberately lean by default -- BOM lines,
+        # suppliers, movements, attachments, reorder levels, and custom
+        # prices are all opt-in via their own Include* flag (confirmed
+        # from Cin7's own API docs, https://dearinventory.docs.apiary.io/,
+        # the "Product" reference page). Without IncludeBOM=true,
+        # BillOfMaterialsProducts comes back an empty array even for a
+        # real assembly with real components configured -- that's what
+        # was misread as "this SKU has no BOM lines" before this was found.
+        params = {"SKU": sku}
+        if include_bom:
+            params["IncludeBOM"] = "true"
+        resp = requests.get(f"{CIN7_BASE_URL}/product", headers=self._headers(), params=params, timeout=60)
         resp.raise_for_status()
         products = resp.json().get("Products") or []
         if not products:
@@ -98,26 +107,31 @@ class Cin7Client:
         Line shape is confirmed from Cin7's own published API docs (the
         "Bill Of Material Product Model", https://dearinventory.docs.apiary.io/
         -- ComponentProductID, ProductCode, Quantity, WastagePercent/
-        WastageQuantity, CostPercentage), not a guess. What's NOT yet
-        confirmed against a live response is that GET /product actually
-        populates BillOfMaterialsProducts for a real assembly -- it came
-        back empty for a SKU confirmed (by a human, in Cin7's own UI) to
-        have a real BOM configured. Kept defensive until that's seen for
-        real: an assembly SKU with an empty BillOfMaterialsProducts still
-        raises rather than silently returning [] (bom_explode would
-        treat that as "this is a raw material, nothing to build" --
-        wrong for a real assembly).
+        WastageQuantity, CostPercentage), not a guess. GET /product is
+        deliberately lean by default -- BillOfMaterialsProducts (and
+        Suppliers/Movements/Attachments/etc.) only populate with
+        IncludeBOM=true (also from the docs -- this is why every earlier
+        attempt came back with an empty array even for a real assembly),
+        which _get_product passes here.
+
+        Not yet seen live: whether IncludeBOM=true actually populates
+        BillOfMaterialsProducts for a real assembly -- confirmed from the
+        docs, not yet from a real response. Kept defensive until that's
+        seen for real: an assembly SKU with an empty
+        BillOfMaterialsProducts still raises rather than silently
+        returning [] (bom_explode would treat that as "this is a raw
+        material, nothing to build" -- wrong for a real assembly).
         """
-        product = self._get_product(sku)
+        product = self._get_product(sku, include_bom=True)
         lines = product.get("BillOfMaterialsProducts") or []
         if not lines:
             if product.get("BillOfMaterial"):
                 raise NotImplementedError(
                     f"{sku!r} is a Cin7 assembly (BillOfMaterial=true) but GET /product "
-                    "returned no BillOfMaterialsProducts lines -- confirm this field actually "
-                    "populates for a real assembly before trusting an empty result, see "
-                    "get_bom's docstring. Returning [] here would be wrong (bom_explode would "
-                    "treat this as a raw material)."
+                    "(with IncludeBOM=true) still returned no BillOfMaterialsProducts lines -- "
+                    "confirm this actually works for a real assembly before trusting an empty "
+                    "result, see get_bom's docstring. Returning [] here would be wrong "
+                    "(bom_explode would treat this as a raw material)."
                 )
             return []  # genuinely a purchased/raw material, BillOfMaterial is false
         bom = []
