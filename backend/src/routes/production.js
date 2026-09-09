@@ -2,7 +2,7 @@ const express = require('express');
 const { pool } = require('../config/db');
 const { asyncHandler } = require('../lib/asyncHandler');
 const { ApiError } = require('../lib/errors');
-const { requireReportAuth, requireEdit } = require('../middleware/reportAuth');
+const { requireProductionAuth, requireProductionEdit } = require('../middleware/productionAuth');
 
 const router = express.Router();
 
@@ -25,10 +25,10 @@ function requireFloorSecret(req, res, next) {
 // Batch labels are printed from both the floor app (X-Floor-Secret) and
 // the admin screen (Supabase bearer token) -- accept either rather than
 // duplicating the route.
-function requireFloorOrReportAuth(req, res, next) {
+function requireFloorOrProductionAuth(req, res, next) {
   const secret = process.env.FLOOR_APP_SHARED_SECRET;
   if (secret && req.headers['x-floor-secret'] === secret) return next();
-  return requireReportAuth(req, res, next);
+  return requireProductionAuth(req, res, next);
 }
 
 function refreshServiceConfig() {
@@ -196,7 +196,7 @@ router.post('/run-actuals', requireFloorSecret, asyncHandler(async (req, res) =>
   }
 }));
 
-router.get('/runs', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/runs', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select r.id, r.plan_batch_id, r.sku, r.qty_to_build, r.bom_level, r.status,
             r.created_at, a.actual_qty, a.reject_qty, a.reported_at
@@ -208,7 +208,7 @@ router.get('/runs', requireReportAuth, asyncHandler(async (req, res) => {
   res.json({ runs: rows });
 }));
 
-router.post('/plan', requireEdit, asyncHandler(async (req, res) => {
+router.post('/plan', requireProductionEdit, asyncHandler(async (req, res) => {
   const data = await callRefreshService('/production/plan', req.body);
   res.status(201).json(data);
 }));
@@ -216,7 +216,7 @@ router.post('/plan', requireEdit, asyncHandler(async (req, res) => {
 // -- Backorder-target / batch (sublist) admin routes, same Supabase
 //    login as the rest of the report --------------------------------
 
-router.get('/targets', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/targets', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, status, outstanding_qty, cin7_assembly_id, created_at, closed_at
      from production.targets order by status, updated_at desc limit 200`
@@ -224,7 +224,7 @@ router.get('/targets', requireReportAuth, asyncHandler(async (req, res) => {
   res.json({ targets: rows });
 }));
 
-router.get('/targets/:targetId/demand-lines', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/targets/:targetId/demand-lines', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select so_number, order_date, qty_backordered, priority_rank
      from production.target_demand_lines where target_id = $1 order by priority_rank`,
@@ -233,7 +233,7 @@ router.get('/targets/:targetId/demand-lines', requireReportAuth, asyncHandler(as
   res.json({ demand_lines: rows });
 }));
 
-router.get('/batches', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/batches', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select b.id, b.batch_code, b.qty_planned, b.priority_rank, b.status, b.created_at,
             t.sku, a.actual_qty, a.reject_qty, a.reported_via, a.reported_at
@@ -248,12 +248,12 @@ router.get('/batches', requireReportAuth, asyncHandler(async (req, res) => {
 // Body: {"demand_lines_by_sku": {sku: [{so_number, order_date, qty_backordered}, ...]}}
 // See refresh-service/backorder_targets.py -- demand extraction from live
 // Cin7 SOs isn't wired in yet, so this is supplied directly for now.
-router.post('/targets/sync', requireEdit, asyncHandler(async (req, res) => {
+router.post('/targets/sync', requireProductionEdit, asyncHandler(async (req, res) => {
   const data = await callRefreshService('/production/targets/sync', req.body);
   res.status(200).json(data);
 }));
 
-router.post('/targets/:targetId/plan-batches', requireEdit, asyncHandler(async (req, res) => {
+router.post('/targets/:targetId/plan-batches', requireProductionEdit, asyncHandler(async (req, res) => {
   const { suggested_run_size } = req.body || {};
   if (!suggested_run_size || suggested_run_size <= 0) {
     throw new ApiError(400, 'suggested_run_size must be a positive number');
@@ -294,7 +294,7 @@ router.get('/stocktake/counts/latest/:sku', requireFloorSecret, asyncHandler(asy
 }));
 
 // Admin: every count, most recent first, for reviewing variances.
-router.get('/stocktake/counts', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/stocktake/counts', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, location, counted_qty, cin7_on_hand_snapshot, variance, status,
             reported_via, reported_by, cin7_adjustment_id, counted_at, adjusted_at
@@ -304,7 +304,7 @@ router.get('/stocktake/counts', requireReportAuth, asyncHandler(async (req, res)
 }));
 
 // Admin: push one reviewed count to Cin7 as a stock adjustment.
-router.post('/stocktake/counts/:countId/adjust', requireEdit, asyncHandler(async (req, res) => {
+router.post('/stocktake/counts/:countId/adjust', requireProductionEdit, asyncHandler(async (req, res) => {
   const data = await callRefreshService(`/stocktake/counts/${req.params.countId}/adjust`, {
     note: (req.body || {}).note || null,
   });
@@ -330,7 +330,7 @@ router.post('/warehouse/putaway-scans', requireFloorSecret, asyncHandler(async (
 // location can hold several SKUs at once (separate containers sharing a
 // shelf), so this aggregates every assigned SKU into one array per
 // location rather than one row per (location, SKU) pair.
-router.get('/warehouse/locations', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/warehouse/locations', requireProductionAuth, asyncHandler(async (req, res) => {
   const params = [];
   let where = '';
   if (req.query.stock_type) {
@@ -350,7 +350,7 @@ router.get('/warehouse/locations', requireReportAuth, asyncHandler(async (req, r
   res.json({ locations: rows });
 }));
 
-router.post('/warehouse/locations', requireEdit, asyncHandler(async (req, res) => {
+router.post('/warehouse/locations', requireProductionEdit, asyncHandler(async (req, res) => {
   const { code, description, stock_type } = req.body || {};
   if (!code) throw new ApiError(400, 'code is required');
   if (stock_type && !['RM', 'SA', 'FP'].includes(stock_type)) {
@@ -365,7 +365,7 @@ router.post('/warehouse/locations', requireEdit, asyncHandler(async (req, res) =
   res.status(201).json({ location: rows[0] });
 }));
 
-router.put('/warehouse/sku-locations/:sku', requireEdit, asyncHandler(async (req, res) => {
+router.put('/warehouse/sku-locations/:sku', requireProductionEdit, asyncHandler(async (req, res) => {
   const { location_code } = req.body || {};
   if (!location_code) throw new ApiError(400, 'location_code is required');
   const data = await callRefreshService(
@@ -375,7 +375,7 @@ router.put('/warehouse/sku-locations/:sku', requireEdit, asyncHandler(async (req
   res.status(200).json(data);
 }));
 
-router.get('/warehouse/putaway-scans', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/warehouse/putaway-scans', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, scanned_location_code, matched, scanned_by, scanned_at,
             (select code from warehouse.locations where id = expected_location_id) as expected_location_code
@@ -388,19 +388,19 @@ router.get('/warehouse/putaway-scans', requireReportAuth, asyncHandler(async (re
 //    labels.py). Same SKU barcode reused across the location label and
 //    the product's own label; a separate barcode for the location itself.
 
-router.get('/labels/sku/:sku', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/labels/sku/:sku', requireProductionAuth, asyncHandler(async (req, res) => {
   const qs = req.query.description ? `?description=${encodeURIComponent(req.query.description)}` : '';
   await streamRefreshServiceFile(`/labels/sku/${encodeURIComponent(req.params.sku)}${qs}`, res);
 }));
 
-router.get('/labels/location/:code', requireReportAuth, asyncHandler(async (req, res) => {
+router.get('/labels/location/:code', requireProductionAuth, asyncHandler(async (req, res) => {
   await streamRefreshServiceFile(`/labels/location/${encodeURIComponent(req.params.code)}`, res);
 }));
 
 // Batch labels are also useful straight from the floor once a batch's
 // been picked -- gated by the floor secret like the rest of that flow,
 // not the admin login.
-router.get('/labels/batch/:batchId', requireFloorOrReportAuth, asyncHandler(async (req, res) => {
+router.get('/labels/batch/:batchId', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
   await streamRefreshServiceFile(`/labels/batch/${encodeURIComponent(req.params.batchId)}`, res);
 }));
 

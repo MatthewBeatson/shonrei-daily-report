@@ -62,22 +62,15 @@
   };
 
   // Production admin now lives on its own domain (production.shonrei.co.nz,
-  // once PRODUCTION_HOST is configured -- see backend/src/app.js), which
-  // means it's a different origin and can no longer just read this page's
-  // sessionStorage. Hand the current access token over in the URL
-  // fragment instead -- fragments are never sent to the server (so it
-  // never hits a log), and production/admin/app.js reads it once and
-  // scrubs it from the address bar immediately (see its init()).
+  // once PRODUCTION_HOST is configured -- see backend/src/app.js) with
+  // its own login (production.production_users -- deliberately separate
+  // from reporting.report_users, see production/README.md "Its own
+  // login"), so this is just a plain link, not a session handoff --
+  // production access is meant to widen to people who must never be able
+  // to sign into this app, so there's nothing to hand over here.
   const productionAdminLink = document.getElementById('production-admin-link');
   if (productionAdminLink && CONFIG.PRODUCTION_APP_URL) {
-    // Plain fallback href (no token) for a middle-click/open-in-new-tab --
-    // lands on the sign-in-required screen there, which is fine.
     productionAdminLink.href = CONFIG.PRODUCTION_APP_URL;
-    productionAdminLink.addEventListener('click', (e) => {
-      if (!session.access_token) return; // not signed in -- let it fall through to the plain URL
-      e.preventDefault();
-      window.location.href = `${CONFIG.PRODUCTION_APP_URL}#token=${encodeURIComponent(session.access_token)}`;
-    });
   }
 
   // ---------------------------------------------------------------

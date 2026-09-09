@@ -1,19 +1,20 @@
 // Production admin: trigger a backorder-demand sync and split a target
-// into batches. Reuses the main dashboard's Supabase session rather than
-// having its own login form -- see index.html's comment. No PIN/MFA
-// handling here: if the token is missing or the API returns 401, this
-// page just points back at the dashboard to sign in again.
-//
-// This app now lives on its own domain (production.shonrei.co.nz, once
-// configured), a different origin from the dashboard, so it can't just
-// read the dashboard's sessionStorage directly -- the dashboard instead
-// hands the token over once via a #token=... URL fragment when the nav
-// link is clicked (see frontend/app.js). importTokenFromUrlFragment()
-// picks that up on load, stores it in *this* origin's sessionStorage,
-// and scrubs it from the address bar immediately so it doesn't linger
-// in browser history.
+// into batches. Its own login -- deliberately NOT the daily report's
+// sign-in, even though both ultimately check the same Supabase Auth
+// accounts. production.production_users (checked server-side by
+// backend/src/middleware/productionAuth.js) is a separate authorization
+// table from reporting.report_users, because production access is
+// expected to widen to people (warehouse/floor admin) who must never be
+// able to see the daily report -- see production/README.md "Its own
+// login". No PIN/MFA/remember-me here, unlike the daily report -- kept
+// deliberately simple; add those later the same way the daily report
+// did, if it turns out to be worth it here too.
 
-const viewSignedOut = document.getElementById('view-signed-out');
+const PRODUCTION_CONFIG = window.__PRODUCTION_CONFIG__ || {};
+const SUPABASE_URL = PRODUCTION_CONFIG.SUPABASE_URL;
+const SUPABASE_ANON_KEY = PRODUCTION_CONFIG.SUPABASE_ANON_KEY;
+
+const viewLogin = document.getElementById('view-login');
 const viewAdmin = document.getElementById('view-admin');
 const adminError = document.getElementById('admin-error');
 const adminSuccess = document.getElementById('admin-success');
@@ -22,31 +23,44 @@ function accessToken() {
   return sessionStorage.getItem('access_token');
 }
 
-function importTokenFromUrlFragment() {
-  const match = /(?:^|&)token=([^&]+)/.exec(window.location.hash.slice(1));
-  if (!match) return;
-  sessionStorage.setItem('access_token', decodeURIComponent(match[1]));
-  history.replaceState(null, '', window.location.pathname + window.location.search);
+function clearSession() {
+  sessionStorage.removeItem('access_token');
+}
+
+function showLogin() {
+  viewLogin.classList.remove('hidden');
+  viewAdmin.classList.add('hidden');
+}
+
+function showAdmin() {
+  viewLogin.classList.add('hidden');
+  viewAdmin.classList.remove('hidden');
+}
+
+async function supabaseSignIn(email, password) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: { apikey: SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error_description || body.msg || 'Sign in failed');
+  sessionStorage.setItem('access_token', body.access_token);
 }
 
 function wireDashboardLink() {
-  const url = window.__APP_CONFIG__?.DASHBOARD_URL;
-  if (!url) return;
-  for (const id of ['dashboard-link', 'signin-dashboard-link']) {
-    const link = document.getElementById(id);
-    if (link) link.href = url;
+  const url = PRODUCTION_CONFIG.DASHBOARD_URL;
+  const link = document.getElementById('dashboard-link');
+  if (link && url) {
+    link.href = url;
+    link.hidden = false;
   }
-}
-
-function showSignedOut() {
-  viewSignedOut.classList.remove('hidden');
-  viewAdmin.classList.add('hidden');
 }
 
 async function api(path, options = {}) {
   const token = accessToken();
   if (!token) {
-    showSignedOut();
+    showLogin();
     throw new Error('Not signed in');
   }
   const res = await fetch(path, {
@@ -58,7 +72,8 @@ async function api(path, options = {}) {
     },
   });
   if (res.status === 401) {
-    showSignedOut();
+    clearSession();
+    showLogin();
     throw new Error('Session expired');
   }
   const contentType = res.headers.get('content-type') || '';
@@ -93,10 +108,10 @@ function fmtDate(v) {
 // to the printer over the network itself).
 async function downloadLabel(path, suggestedFilename) {
   const token = accessToken();
-  if (!token) { showSignedOut(); return; }
+  if (!token) { showLogin(); return; }
   try {
     const res = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
-    if (res.status === 401) { showSignedOut(); return; }
+    if (res.status === 401) { clearSession(); showLogin(); return; }
     if (!res.ok) {
       const body = (res.headers.get('content-type') || '').includes('application/json') ? await res.json() : null;
       throw new Error(body?.error || `Couldn't fetch label (${res.status})`);
@@ -443,15 +458,32 @@ document.getElementById('download-sku-label-btn').addEventListener('click', () =
   downloadLabel(`/production/labels/sku/${encodeURIComponent(sku)}`, `sku-${sku}.zpl`);
 });
 
-(function init() {
-  wireDashboardLink();
-  importTokenFromUrlFragment();
-  if (!accessToken()) {
-    showSignedOut();
-    return;
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorEl = document.getElementById('login-error');
+  const submitBtn = document.getElementById('login-submit');
+  errorEl.textContent = '';
+  submitBtn.disabled = true;
+  try {
+    await supabaseSignIn(
+      document.getElementById('login-email').value.trim(),
+      document.getElementById('login-password').value
+    );
+    enterAdmin();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  } finally {
+    submitBtn.disabled = false;
   }
-  viewSignedOut.classList.add('hidden');
-  viewAdmin.classList.remove('hidden');
+});
+
+document.getElementById('sign-out-btn').addEventListener('click', () => {
+  clearSession();
+  showLogin();
+});
+
+function enterAdmin() {
+  showAdmin();
   addDemandRow();
   addDemandRow();
   addDemandRow();
@@ -460,4 +492,13 @@ document.getElementById('download-sku-label-btn').addEventListener('click', () =
   loadStocktake();
   loadLocations();
   loadPutawayScans();
+}
+
+(function init() {
+  wireDashboardLink();
+  if (accessToken()) {
+    enterAdmin();
+  } else {
+    showLogin();
+  }
 })();

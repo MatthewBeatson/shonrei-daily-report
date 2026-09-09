@@ -11,20 +11,23 @@
 </head>
 <body>
 
-<!-- No login form of its own -- reuses the main dashboard's Supabase
-     session (sessionStorage.access_token), same origin. If it's missing
-     or expired, #view-signed-out below tells you to sign in there first
-     (same tab, so the token carries over when you come back). -->
-<div id="view-signed-out" class="center-screen hidden">
-  <div class="card">
-    <h1>Sign in required</h1>
-    <p class="sub">
-      This page reuses your Shonrei Daily Report sign-in.
-      <a href="/" id="signin-dashboard-link">Sign in on the dashboard</a>, then use the
-      "Production admin" link there again -- it hands this page a fresh
-      token, since this is a separate site from the dashboard.
-    </p>
-  </div>
+<!-- Its own login -- deliberately NOT the daily report's sign-in.
+     production.production_users is a separate authorization table from
+     reporting.report_users (same Supabase Auth pool, different list of
+     who's let in), because production access is expected to widen to
+     people who must never be able to see the daily report. See
+     production/README.md "Its own login". -->
+<div id="view-login" class="center-screen hidden">
+  <form class="card" id="login-form" autocomplete="on">
+    <h1>Shonrei Production</h1>
+    <p class="sub">Sign in to plan production, review stocktake, and manage locations.</p>
+    <label for="login-email">Email</label>
+    <input type="email" id="login-email" name="email" autocomplete="username" required />
+    <label for="login-password">Password</label>
+    <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+    <button type="submit" class="btn-primary" id="login-submit">Sign in</button>
+    <div class="error-text" id="login-error"></div>
+  </form>
 </div>
 
 <div id="view-admin" class="hidden" style="display:flex; flex-direction:column; min-height:100vh;">
@@ -34,7 +37,8 @@
       <div class="as-of">Backorder targets &amp; batches -- see production/README.md</div>
     </div>
     <div class="right">
-      <a class="btn-link" id="dashboard-link" href="/" style="color:#fff; opacity:0.8;">&larr; Dashboard</a>
+      <a class="btn-link" id="dashboard-link" href="#" hidden style="color:#fff; opacity:0.8;">Daily report &rarr;</a>
+      <button class="btn-link" id="sign-out-btn" style="color:#fff; opacity:0.8;">Sign out</button>
     </div>
   </div>
 
@@ -195,7 +199,7 @@
   </div>
 </div>
 
-<script src="/app-config.js"></script>
+<script src="/production-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

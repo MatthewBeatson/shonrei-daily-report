@@ -434,25 +434,55 @@ random Host header, still land on the daily report when it's unset.
 3. Set `PRODUCTION_HOST` (the bare hostname) and `MAIN_APP_URL` (the
    daily report's own public URL) as env vars on `shonrei-report-web`.
 
-**The one thing this genuinely breaks, and how it's fixed:** the admin
-screen's "no separate login" design relied on `sessionStorage` being
-shared with the dashboard because they were the same origin. A different
-subdomain is a different origin -- `sessionStorage` does **not** cross
-that boundary, so without a fix the admin screen would show "sign in
-required" forever, even right after signing in on the dashboard. Fixed
-with a one-time token handoff: the dashboard's "Production admin" link
-now hands the current access token over in a `#token=...` URL fragment
-at click time (fragments are never sent to the server, so it never
-reaches a log), and `production/admin/app.js`'s `importTokenFromUrlFragment()`
-reads it into *this* origin's `sessionStorage` and immediately scrubs it
-from the address bar (`history.replaceState`). Verified locally by
-booting the backend with `PRODUCTION_HOST` set and a Host header
-matching it: the admin app correctly serves at `/`, `/styles.css`
-correctly still resolves to the *shared* base stylesheet (not admin's
-own `admin.css` -- these two used to collide once admin moved to serving
-at root, fixed by renaming admin's page-specific stylesheet), the floor
-app serves at `/floor`, and `/app-config.js` correctly reports the real
-dashboard URL for the "back to dashboard" link.
+**Verified locally** by booting the backend with `PRODUCTION_HOST` set
+and a matching Host header: the admin app correctly serves at `/`,
+`/styles.css` correctly still resolves to the *shared* base stylesheet
+(not admin's own `admin.css` -- these two used to collide once admin
+moved to serving at root, fixed by renaming admin's page-specific
+stylesheet), and the floor app serves at `/floor`.
+
+## Its own login
+
+Production admin used to reuse the daily report's Supabase session
+(same-origin `sessionStorage`, no login form of its own). Once
+production access was confirmed to be widening to warehouse/floor-admin
+staff who must **never** be able to see the daily report, that stopped
+being viable -- reusing the dashboard's session is exactly the kind of
+thing that quietly grants access nobody meant to grant. Two changes:
+
+1. **`production.production_users`** (migration 012) is a real, separate
+   authorization table -- same pattern this repo already uses to keep
+   `reporting.report_users` disjoint from ordering-portal's own users
+   table: one shared Supabase Auth pool (one set of email/password
+   accounts), but a different list deciding who's actually let into each
+   app. Someone can be in `production_users`, `report_users`, both, or
+   neither -- being in one implies nothing about the other.
+   `backend/src/middleware/productionAuth.js` (`requireProductionAuth`
+   checks membership, `requireProductionEdit` checks `can_edit`) mirrors
+   `reportAuth.js` exactly, on purpose. `scripts/create_production_users.py`
+   mirrors `scripts/create_report_users.py` for provisioning.
+2. **`production/admin/index.html` has its own login form** -- plain
+   email/password against the same Supabase project (no PIN/MFA/
+   remember-me, unlike the daily report; add those later the same way it
+   did, if it turns out worth it here too), served its Supabase
+   credentials via `/production-config.js` (same reasoning as the daily
+   report's `/config.js` -- the anon key is safe to serve publicly, it
+   only exchanges credentials for a session, it grants nothing on its
+   own). The dashboard's "Production admin" link is now a **plain link**,
+   not a session handoff -- there's nothing to hand over once the two
+   apps' user lists are meant to diverge.
+
+**Verified locally**: inserted a fake `auth.users` row and a matching
+`production.production_users` row with no corresponding
+`reporting.report_users` row, and confirmed directly against the DB that
+this "warehouse staff" account is a real `production_users` member while
+having zero presence in `report_users` -- the actual authorization
+boundary the whole redesign exists to guarantee. Confirmed
+`/production-config.js` serves real Supabase credentials plus the
+dashboard URL on the dedicated subdomain (and `DASHBOARD_URL: "/"` on
+the legacy `/production-admin` path, where "back to dashboard" genuinely
+is just `/`), and confirmed every production API route still correctly
+401s with no `Authorization` header.
 
 ## Still not built
 

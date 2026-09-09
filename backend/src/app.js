@@ -43,13 +43,20 @@ function buildMainApp() {
     );
   });
 
-  // Same shape as the production app's /app-config.js below, served here
-  // too so admin/app.js's script tag doesn't 404 when the admin screen
-  // is reached via the old /production-admin/ path on this domain --
-  // DASHBOARD_URL null just means "leave the relative / href alone",
-  // which is already correct on this domain.
-  app.get('/app-config.js', (req, res) => {
-    res.type('application/javascript').send(`window.__APP_CONFIG__ = ${JSON.stringify({ DASHBOARD_URL: null })};`);
+  // Same shape as buildProductionApp's own /production-config.js below,
+  // served here too so admin's script tag doesn't 404 when reached via
+  // the old /production-admin/ path on this domain. DASHBOARD_URL is "/"
+  // here (not a URL) since on this domain "/" genuinely is the dashboard
+  // -- just a convenience link, not an auth handoff (admin has its own
+  // login regardless of which path/domain served it).
+  app.get('/production-config.js', (req, res) => {
+    res.type('application/javascript').send(
+      `window.__PRODUCTION_CONFIG__ = ${JSON.stringify({
+        SUPABASE_URL: process.env.SUPABASE_URL,
+        SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+        DASHBOARD_URL: '/',
+      })};`
+    );
   });
 
   app.use('/reporting', reportingRouter);
@@ -87,14 +94,17 @@ function buildProductionApp() {
   // this host never accidentally serves the daily report itself.
   app.get('/styles.css', (req, res) => res.sendFile(path.join(FRONTEND_DIR, 'styles.css')));
 
-  // Tells the admin screen where "back to the daily report" actually
-  // goes -- on this dedicated host, "/" is this app's own root, not the
-  // dashboard, so that link needs the dashboard's real URL. Falls back
-  // to null (admin/app.js then leaves the relative "/" href alone) if
-  // MAIN_APP_URL isn't set.
-  app.get('/app-config.js', (req, res) => {
+  // Admin has its own login on this host (production.production_users --
+  // deliberately NOT reporting.report_users, see production/README.md
+  // "Its own login") rather than borrowing a session from the dashboard,
+  // so it needs its own copy of the Supabase creds to sign in with.
+  // DASHBOARD_URL is purely a "jump to the daily report" convenience
+  // link for whoever happens to have both accounts -- not an auth path.
+  app.get('/production-config.js', (req, res) => {
     res.type('application/javascript').send(
-      `window.__APP_CONFIG__ = ${JSON.stringify({
+      `window.__PRODUCTION_CONFIG__ = ${JSON.stringify({
+        SUPABASE_URL: process.env.SUPABASE_URL,
+        SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
         DASHBOARD_URL: process.env.MAIN_APP_URL || null,
       })};`
     );
