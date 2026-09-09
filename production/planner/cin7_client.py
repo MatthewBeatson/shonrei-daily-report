@@ -33,14 +33,56 @@ output, and `production/README.md`):
         safe_json()).
 
 The whole Cin7-read side (get_bom, get_availability, get_stock_on_hand)
-is now confirmed against live data. Still stubbed, needs its own
-confirm-first pass before use: the assembly
-create/authorise/allocate/complete/cancel endpoints, get_open_assemblies,
-and adjust_stock_on_hand.
+is confirmed against live data.
+
+The write side is wired from Cin7's own documented endpoint shapes
+(https://dearinventory.docs.apiary.io/, the "Finished Goods" / assembly
+resource and the "Stock Adjustment" resource -- Cin7 calls a standard
+assembly a "Finished Good" in the API, not "Assembly"):
+    POST /ExternalApi/v2/finishedGoods                    Create.
+    GET  /ExternalApi/v2/finishedGoods/order?TaskID=<id>   read the
+        auto-populated OrderLines (from the product's BOM) before
+        authorising -- Cin7's own snapshot, not rebuilt from get_bom.
+    POST /ExternalApi/v2/finishedGoods/order               Authorise
+        (Status: "AUTHORISED", + those OrderLines).
+    GET  /ExternalApi/v2/finishedGoods/pick?TaskID=<id>    read the
+        auto-populated PickLines before completing.
+    POST /ExternalApi/v2/finishedGoods/pick                Complete
+        (Status: "COMPLETED", + those PickLines) -- the one worked
+        example in Cin7's docs. There is no documented status value for
+        "picked/allocated but not yet completed" -- see
+        allocate_assembly's docstring, that stage is deliberately not
+        wired.
+    DELETE /ExternalApi/v2/finishedGoods?ID=<id>&Void=true  Cancel. The
+        query param is literally "ID" while every other response uses
+        "TaskID" -- assumed the same identifier, not yet proven live.
+    GET  /ExternalApi/v2/finishedGoodsList?Search=<sku>     list/search,
+        used by get_open_assemblies. No single documented "open" status,
+        so results are filtered locally to exclude COMPLETED/VOIDED.
+    POST /ExternalApi/v2/stockadjustment  (Status: "DRAFT")  then
+    PUT  /ExternalApi/v2/stockadjustment  (same TaskID, Status:
+        "COMPLETED") -- two-step, per Cin7's own documented flow.
+        Lines[].Quantity is the TARGET on-hand level after the
+        adjustment, not a delta (confirmed from Cin7's own worked
+        example: on-hand 601, Quantity=600 submitted, resulting
+        transaction -1) -- adjust_stock_on_hand's `new_qty` is passed
+        straight through as that target level.
+
+None of this has been run against a live tenant yet (see
+scripts/dump_sample_assembly_write.py, the write-side counterpart to
+dump_sample_bom.py) -- these shapes come from Cin7's own docs, same
+confidence level get_bom had before WIPMT20T proved it live. Open
+questions the dump script needs to settle: whether Account/WIPAccount
+are actually required on Create/Authorise/Complete/stock-adjustment
+(omitted here -- Cin7's docs example values look tenant-specific, not
+guessed), whether "ID" and "TaskID" really are the same identifier for
+DELETE, and whether PUT /finishedGoods can edit Quantity on an Authorised
+assembly (adjust_assembly_qty).
 """
 from __future__ import annotations
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import requests
 
@@ -178,86 +220,256 @@ class Cin7Client:
         return result
 
     def get_open_assemblies(self, skus: list[str]) -> dict[str, float]:
-        """SKU -> total qty across assemblies not yet COMPLETED, so a
+        """SKU -> total qty across assemblies not yet COMPLETED or VOIDED
+        (Cin7 doesn't document a single "open" status, so this fetches
+        candidates via GET /finishedGoodsList and excludes those two
+        explicitly rather than assume everything else counts), so a
         re-run of the planner doesn't create duplicate assemblies for
         demand that's already in flight. Feeds explode_bom's
         `open_assembly_qty`.
+
+        One request per SKU via Search -- Search matches several fields
+        (AssemblyNumber/Location/Status/Name/ProductCode/BatchSN/Notes),
+        not just ProductCode, so rows are filtered locally to an exact
+        ProductCode match; a bulk multi-SKU query isn't documented.
         """
-        raise NotImplementedError("wire against live Cin7 assembly-list endpoint")
+        result = {}
+        for sku in skus:
+            total = 0.0
+            page = 1
+            while True:
+                resp = requests.get(
+                    f"{CIN7_BASE_URL}/finishedGoodsList",
+                    headers=self._headers(),
+                    params={"Search": sku, "Page": page, "Limit": 100},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                rows = resp.json().get("FinishedGoods") or []
+                for row in rows:
+                    if row.get("ProductCode") == sku and row.get("Status") not in ("COMPLETED", "VOIDED"):
+                        total += row.get("Quantity") or 0
+                if len(rows) < 100:
+                    break
+                page += 1
+            result[sku] = total
+        return result
+
+    # -- write helpers, shared by every method below ---------------------
+
+    @staticmethod
+    def _raise_if_errors(body: dict) -> None:
+        # Cin7 doesn't always use HTTP error statuses for a rejected write
+        # (see get_bom's docstring re: fake-200 404s on reads) -- a
+        # validation failure on a write can come back as HTTP 200 with a
+        # populated "Errors" array instead, per the documented
+        # finishedGoods response shape. Treat that as a hard failure.
+        errors = body.get("Errors")
+        if errors:
+            raise RuntimeError(f"Cin7 rejected the request: {errors}")
+
+    def _post_json(self, path: str, payload: dict) -> dict:
+        resp = requests.post(f"{CIN7_BASE_URL}/{path}", headers=self._headers(), json=payload, timeout=60)
+        resp.raise_for_status()
+        body = resp.json()
+        self._raise_if_errors(body)
+        return body
+
+    def _put_json(self, path: str, payload: dict) -> dict:
+        resp = requests.put(f"{CIN7_BASE_URL}/{path}", headers=self._headers(), json=payload, timeout=60)
+        resp.raise_for_status()
+        body = resp.json()
+        self._raise_if_errors(body)
+        return body
+
+    def _get_full_assembly(self, assembly_id: str) -> dict:
+        resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_order(self, assembly_id: str) -> dict:
+        resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods/order", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+
+    def _get_pick(self, assembly_id: str) -> dict:
+        resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods/pick", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+
+    @staticmethod
+    def _assembly_from(body: dict) -> Assembly:
+        return Assembly(
+            assembly_id=body.get("TaskID") or body.get("ID"),
+            sku=body.get("ProductCode", ""),
+            status=body.get("Status", ""),
+            qty=body.get("Quantity") or 0,
+        )
 
     # -- the four CAAC stages, one method each -------------------------
 
-    def create_assembly(self, sku: str, qty: float) -> Assembly:
-        """Stage 1: Create. Drafts an assembly for `qty` of `sku` against
-        its current BOM. Returns the new assembly in DRAFT status.
+    def create_assembly(self, sku: str, qty: float, *, location: str | None = None) -> Assembly:
+        """Stage 1: Create. POST /finishedGoods -- Cin7 calls this a
+        "Finished Good", not "Assembly", in the API. Drafts an assembly
+        for `qty` of `sku`; Cin7 auto-populates OrderLines from the
+        product's current BOM server-side (authorise_assembly reads that
+        back rather than rebuilding it from get_bom here).
+
+        `location` defaults to the product's own DefaultLocation
+        (single-Cin7-location tenant so far) -- pass it explicitly if
+        Shonrei ever runs more than one Cin7 warehouse location.
         """
-        raise NotImplementedError("wire against live Cin7 assembly create endpoint")
+        product = self._get_product(sku)
+        body = self._post_json("finishedGoods", {
+            "ProductID": product["ID"],
+            "ProductCode": sku,
+            "Quantity": qty,
+            "Location": location or product.get("DefaultLocation"),
+        })
+        return self._assembly_from(body)
 
     def authorise_assembly(self, assembly_id: str) -> Assembly:
-        """Stage 2: Authorise. Locks the BOM snapshot for this assembly."""
-        raise NotImplementedError("wire against live Cin7 assembly endpoint")
+        """Stage 2: Authorise. POST /finishedGoods/order with the
+        OrderLines Cin7 auto-populated at Create time (fetched fresh via
+        GET first -- Cin7's own snapshot is authorised, not a rebuild)."""
+        order = self._get_order(assembly_id)
+        body = self._post_json("finishedGoods/order", {
+            "TaskID": assembly_id,
+            "Status": "AUTHORISED",
+            "OrderLines": order.get("OrderLines") or [],
+        })
+        return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 
     def allocate_assembly(self, assembly_id: str) -> Assembly:
-        """Stage 3: Allocate. Reserves component stock against this
-        assembly. Can fail (partial or no allocation) if component stock
-        isn't actually available -- the orchestrator must check the
-        returned status and not assume success.
+        """Stage 3: Allocate. NOT wired. Cin7's own docs only show one
+        pick-stage endpoint (POST /finishedGoods/pick) with Status going
+        straight to "COMPLETED" in the one worked example -- there's no
+        documented status value for "picked/allocated but not yet
+        completed", even though Cin7's own UI workflow is Authorise ->
+        Pick -> Allocate -> Complete as separate steps. Guessing that
+        status string against a live tenant is exactly the kind of
+        silent-wrong-field risk this file avoids elsewhere -- confirm the
+        real value with scripts/dump_sample_assembly_write.py before
+        wiring this in.
+
+        Not needed today: the backorder-target/batch flow
+        (complete_small_assembly) completes directly from Authorised and
+        never calls this. Only orchestrator.py's general BOM-explosion
+        path wants a held "allocated, not yet completed" state, and that
+        path has no floor screen yet (see production/README.md).
         """
-        raise NotImplementedError("wire against live Cin7 assembly endpoint")
+        raise NotImplementedError(
+            "confirm the real 'picked/allocated but not completed' Status value for "
+            "POST /finishedGoods/pick against a live tenant before wiring this -- "
+            "see allocate_assembly's docstring"
+        )
 
     def complete_assembly(self, assembly_id: str, actual_qty: float) -> Assembly:
-        """Stage 4: Complete. This is the one call driven by a real floor
-        input (production.run_actuals), not by the plan -- actual_qty may
-        differ from the qty the assembly was created/allocated for.
+        """Stage 4: Complete. POST /finishedGoods/pick with the
+        auto-populated PickLines and Status="COMPLETED" -- the one worked
+        example in Cin7's docs.
+
+        `actual_qty` must match the assembly's own Quantity (set at
+        Create) -- the documented pick/complete request has no field for
+        changing the finished-good quantity at this stage, only the
+        Quantity already on the assembly record. If a floor-reported
+        actual differs from what was created/authorised, this raises
+        rather than silently completing the wrong quantity; whether PUT
+        /finishedGoods can change Quantity on an Authorised (not just
+        Draft) assembly first is unconfirmed -- see adjust_assembly_qty.
         """
-        raise NotImplementedError("wire against live Cin7 assembly complete endpoint")
+        full = self._get_full_assembly(assembly_id)
+        existing_qty = full.get("Quantity")
+        if existing_qty is not None and float(existing_qty) != float(actual_qty):
+            raise NotImplementedError(
+                f"complete_assembly({assembly_id!r}, {actual_qty}): assembly's own Quantity "
+                f"is {existing_qty}, not {actual_qty} -- Cin7's documented pick/complete request "
+                "has no field to change it at this stage, see this method's docstring"
+            )
+        pick = self._get_pick(assembly_id)
+        body = self._post_json("finishedGoods/pick", {
+            "TaskID": assembly_id,
+            "Status": "COMPLETED",
+            "PickLines": pick.get("PickLines") or [],
+        })
+        return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 
     # -- backorder targets (see target_sync.py) ------------------------
     # A "target" is one long-lived Cin7 assembly per SKU sitting in
     # Authorised status, whose quantity mirrors total outstanding SO
     # backorder demand. It is deliberately never Allocated/Completed --
     # its only job is to make outstanding demand visible inside Cin7
-    # itself. Every method below is still a stub for the same reason as
-    # the rest of this file: exact Cin7 API shapes need confirming
-    # against live data first (see scripts/dump_sample_bom.py). Use
-    # DryRunCin7Client (refresh-service/dry_run_cin7.py) to exercise the
-    # whole flow today without them.
+    # itself. Use DryRunCin7Client (refresh-service/dry_run_cin7.py) to
+    # exercise the whole flow without touching live Cin7.
 
     def create_authorised_assembly(self, sku: str, qty: float) -> Assembly:
         """Create + Authorise (stages 1-2 only, deliberately no Allocate)
         for a brand new target."""
-        raise NotImplementedError("wire against live Cin7 assembly create+authorise endpoints")
+        assembly = self.create_assembly(sku, qty)
+        return self.authorise_assembly(assembly.assembly_id)
 
     def adjust_assembly_qty(self, assembly_id: str, new_qty: float) -> Assembly:
         """Change an existing Authorised (not yet Allocated) assembly's
         quantity in place, to match a target's newly-recalculated
-        outstanding demand. If Cin7's API doesn't support an in-place
-        quantity edit on an Authorised assembly, the real implementation
-        falls back to close_assembly() + create_authorised_assembly() --
-        confirm which is true before wiring this for real."""
-        raise NotImplementedError("wire against live Cin7 assembly update endpoint")
+        outstanding demand, via PUT /finishedGoods. NOT YET CONFIRMED
+        whether Cin7 accepts an in-place Quantity edit once an assembly
+        is past Draft -- a target's assembly sits in Authorised, and the
+        documented PUT model doesn't call out a status restriction, but
+        that's silence in the docs, not a live confirmation (see
+        scripts/dump_sample_assembly_write.py). If this errors live, the
+        proven fallback is close_assembly() + create_authorised_assembly()
+        (backorder_targets.sync_targets already has both available)."""
+        full = self._get_full_assembly(assembly_id)
+        body = self._put_json("finishedGoods", {
+            "ID": full.get("ID") or assembly_id,
+            "ProductCode": full.get("ProductCode"),
+            "ProductID": full.get("ProductID"),
+            "Quantity": new_qty,
+            "Location": full.get("Location"),
+            "LocationID": full.get("LocationID"),
+        })
+        return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 
     def close_assembly(self, assembly_id: str) -> None:
         """Cancel a target's assembly once its outstanding_qty reaches
-        zero (policy call: close and recreate later, don't leave a
-        zero-qty assembly open for reuse -- see target_sync.py)."""
-        raise NotImplementedError("wire against live Cin7 assembly cancel endpoint")
+        zero, via DELETE /finishedGoods?ID=<id>&Void=true (policy call:
+        close and recreate later, don't leave a zero-qty assembly open
+        for reuse -- see target_sync.py). Void=true, not Void=false
+        (which means "undo" -- reverses back to Draft, not what closing a
+        target wants).
+
+        Cin7's docs name the query param "ID" while every response uses
+        "TaskID" -- assumed the same underlying identifier since both are
+        on the one finished-goods record, but not yet proven live (see
+        scripts/dump_sample_assembly_write.py).
+        """
+        resp = requests.delete(
+            f"{CIN7_BASE_URL}/finishedGoods",
+            headers=self._headers(),
+            params={"ID": assembly_id, "Void": "true"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        self._raise_if_errors(resp.json())
 
     def complete_small_assembly(self, sku: str, qty: float) -> Assembly:
-        """The actual FG-creating call: Create -> Authorise -> Allocate ->
-        Complete, all four stages, for one batch's reported actual
-        quantity. This is the only place in the whole backorder-target
-        flow that a real Cin7 assembly gets completed and stock
-        genuinely moves -- everything upstream (targets, batches) is
-        planning state only."""
-        raise NotImplementedError("wire against live Cin7 assembly create/authorise/allocate/complete endpoints")
+        """The actual FG-creating call: Create -> Authorise -> Complete
+        for one batch's reported actual quantity, at the qty that's
+        actually being completed from the start -- so there's no
+        Allocate-stage gap and no later quantity mismatch for
+        complete_assembly to reject (see its docstring). This is the only
+        place in the whole backorder-target flow that a real Cin7
+        assembly gets completed and stock genuinely moves -- everything
+        upstream (targets, batches) is planning state only."""
+        assembly = self.create_assembly(sku, qty)
+        assembly = self.authorise_assembly(assembly.assembly_id)
+        return self.complete_assembly(assembly.assembly_id, qty)
 
     # -- stocktake (see refresh-service/stocktake.py) -------------------
     # Replaces the old Google Sheet + AppSheet workflow. A count is
     # recorded locally, snapshotted against Cin7's on-hand qty at that
     # moment (for the variance shown to whoever reviews it), and -- only
-    # once reviewed -- pushed to Cin7 as a stock adjustment. Same
-    # confirm-before-wiring status as everything else in this file.
+    # once reviewed -- pushed to Cin7 as a stock adjustment.
 
     def get_stock_on_hand(self, sku: str) -> float:
         """Cin7's current on-hand qty for one SKU (the raw `OnHand` field,
@@ -272,8 +484,43 @@ class Cin7Client:
 
     def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
         """Push a physical count to Cin7 as a stock adjustment, setting
-        on-hand to `new_qty`. Returns Cin7's adjustment/transaction id.
-        Deliberately a separate, explicit call from recording a count --
-        see stocktake.py: a count is never auto-pushed, a person reviews
-        the variance first."""
-        raise NotImplementedError("wire against live Cin7 stock adjustment endpoint")
+        on-hand to `new_qty`. Returns Cin7's TaskID. Deliberately a
+        separate, explicit call from recording a count -- see
+        stocktake.py: a count is never auto-pushed, a person reviews the
+        variance first.
+
+        Two-step per Cin7's documented flow: POST /stockadjustment
+        (Status DRAFT) to get a TaskID, then PUT /stockadjustment (same
+        TaskID, Status COMPLETED) to commit it.
+
+        Quantity semantics are easy to get backwards: Cin7's own worked
+        example has Lines[].Quantity as the TARGET on-hand level after
+        the adjustment, not a delta (on-hand 601, Quantity=600 submitted,
+        resulting transaction -1) -- `new_qty` is passed straight through
+        as that target level, matching stocktake.py's counted_qty.
+        """
+        product = self._get_product(sku)
+        line = {
+            "SKU": sku,
+            "ProductID": product["ID"],
+            "ProductName": product.get("Name"),
+            "Location": product.get("DefaultLocation"),
+            "Quantity": new_qty,
+            "Comments": note or "",
+        }
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        draft = self._post_json("stockadjustment", {
+            "EffectiveDate": now,
+            "Lines": [line],
+            "Reference": note or "",
+            "Status": "DRAFT",
+        })
+        task_id = draft["TaskID"]
+        self._put_json("stockadjustment", {
+            "TaskID": task_id,
+            "EffectiveDate": draft.get("EffectiveDate") or now,
+            "Lines": draft.get("Lines") or [line],
+            "Reference": note or "",
+            "Status": "COMPLETED",
+        })
+        return task_id

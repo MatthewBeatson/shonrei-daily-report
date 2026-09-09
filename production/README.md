@@ -197,10 +197,14 @@ exactly what it would have done (also written to
 `production.cin7_dry_run_log` for inspection) and returns a fake
 assembly ID, so the whole chain -- sync demand, create a target, split
 it into batches, report an actual, watch the target close -- is provable
-end to end with zero risk to live inventory. Swapping in a real
-`Cin7Client` once its stubbed methods are wired against confirmed
-endpoints (`scripts/dump_sample_bom.py`) is the only change needed --
-`backorder_targets.py` and `batch_staging.py` don't care which
+end to end with zero risk to live inventory. `cin7_client.py`'s real
+implementations of these methods are now wired from Cin7's own
+documented Finished Goods / Stock Adjustment endpoint shapes (see its
+module docstring), but not yet proven against a live tenant --
+`scripts/dump_sample_assembly_write.py` is the write-side counterpart to
+`dump_sample_bom.py`, run once against a real throwaway assembly to
+confirm before switching `DryRunCin7Client()` for a real `Cin7Client()`
+here. `backorder_targets.py` and `batch_staging.py` don't care which
 implementation they're given.
 
 **Not yet wired:** `backorder_targets.extract_demand_lines()` -- turning
@@ -527,13 +531,46 @@ This closes out the Cin7-read side entirely: `get_bom`, `get_availability`,
 and `get_stock_on_hand` are all wired against confirmed live field names,
 no more open questions on any of the three.
 
+## Confirmed Cin7 writes (documented, not yet live-tested)
+
+`cin7_client.py`'s Create/Authorise/Complete/Cancel assembly calls,
+`get_open_assemblies`, and `adjust_stock_on_hand` are wired from Cin7's
+own documented "Finished Goods" (= standard assembly) and "Stock
+Adjustment" resources -- see the module docstring for the full endpoint
+list. Two things this discipline deliberately did NOT wire from docs
+alone:
+
+- **`allocate_assembly`** -- Cin7's docs only show one pick-stage
+  endpoint (`POST /finishedGoods/pick`) whose one worked example jumps
+  straight to `Status: "COMPLETED"`; there's no documented status value
+  for "picked/allocated but not yet completed", even though Cin7's own
+  UI has that as a separate step. Raises rather than guess the string.
+  Not needed for the backorder-target/batch flow (`complete_small_assembly`
+  goes straight from Authorised to Completed) -- only blocks
+  `orchestrator.py`'s general path, which has no floor screen yet anyway.
+- Whether **Account/WIPAccount** fields are actually required on
+  Create/Authorise/Complete/stock-adjustment (Cin7's worked examples use
+  tenant-specific-looking codes like `"714"`/`"715"` -- omitted here
+  rather than guessed) and whether **`ID` and `TaskID`** are really the
+  same identifier for the cancel endpoint's `DELETE ?ID=...`.
+
+`scripts/dump_sample_assembly_write.py` is the write-side counterpart to
+`dump_sample_bom.py` -- it walks a real throwaway assembly through
+Create -> Authorise -> Complete (with a confirmation prompt before each
+write), tests the Void/cancel path on a separate never-authorised draft,
+and runs a genuinely no-op stock adjustment (targets the SKU's current
+on-hand, so the resulting transaction should be zero). Run it once
+against a live tenant, and this list -- along with `DryRunCin7Client`
+still being what actually runs today -- gets the same "confirmed live"
+treatment the read side got above.
+
 ## Still not built
 
-- **Real Cin7 writes everywhere they're currently dry-run**: SO
-  backorder extraction (`backorder_targets.extract_demand_lines`), the
-  Create/Authorise/Allocate/Complete/Cancel assembly calls, and
-  stocktake's `adjust_stock_on_hand` -- confirmed the same way, via
-  `scripts/dump_sample_bom.py`.
+- **SO backorder extraction**
+  (`backorder_targets.extract_demand_lines`) -- turning a Cin7 sale's
+  full detail into per-SKU backordered quantities, needs its own
+  confirm-first pass against a live sale detail (see
+  `backorder_targets.py`'s module docstring).
 - **QR-scan-to-select on the general-path floor screen** -- Batches and
   Stocktake both already have barcode/manual entry; the general
   BOM-explosion path (`production_runs`) has no floor-app screen of its

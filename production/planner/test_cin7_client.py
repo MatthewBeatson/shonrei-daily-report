@@ -6,7 +6,7 @@ account (see cin7_client.py's module docstring and production/README.md)
 import unittest
 from unittest.mock import MagicMock, patch
 
-from cin7_client import Cin7Client
+from cin7_client import Assembly, Cin7Client
 
 # Trimmed to the fields these tests actually touch -- the real response
 # has ~60 fields per product, see production/README.md for the full dump.
@@ -208,6 +208,244 @@ class GetStockOnHandTests(unittest.TestCase):
         # on-hand, not stock minus what's allocated elsewhere.
         mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE)
         self.assertEqual(self.client.get_stock_on_hand('WIPMT20T'), 43.0)
+
+
+# -- write-side tests -- shapes from Cin7's own documented "Finished
+# Goods" / "Stock Adjustment" endpoints (production/README.md "Confirmed
+# Cin7 writes"), not yet proven against a live tenant -- see
+# scripts/dump_sample_assembly_write.py.
+
+PRODUCT_FOR_CREATE = {
+    "Total": 1, "Page": 1,
+    "Products": [{"ID": "product-guid-1", "SKU": "FG-ASSEMBLED", "Name": "Assembled thing", "DefaultLocation": "Main Warehouse"}],
+}
+
+CREATE_RESPONSE = {
+    "AssemblyNumber": "FG-00016", "TaskID": "task-1", "Status": "DRAFT",
+    "ProductCode": "FG-ASSEMBLED", "ProductID": "product-guid-1", "Quantity": 5.0,
+    "OrderLines": [], "PickLines": [], "Transactions": [], "Errors": [],
+}
+
+ORDER_LINES_RESPONSE = {
+    "TaskID": "task-1", "Status": "DRAFT",
+    "OrderLines": [{"ProductCode": "RAW-CARDBOARD", "ProductID": "raw-guid", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0}],
+}
+
+AUTHORISE_RESPONSE = {"TaskID": "task-1", "Status": "AUTHORISED", "OrderLines": ORDER_LINES_RESPONSE["OrderLines"]}
+
+FULL_ASSEMBLY_AUTHORISED = {
+    "TaskID": "task-1", "ID": "record-guid-1", "Status": "AUTHORISED",
+    "ProductCode": "FG-ASSEMBLED", "ProductID": "product-guid-1", "Quantity": 5.0,
+    "Location": "Main Warehouse", "LocationID": "loc-guid",
+}
+
+PICK_LINES_RESPONSE = {
+    "TaskID": "task-1", "Status": "AUTHORISED",
+    "PickLines": [{"ProductCode": "RAW-CARDBOARD", "ProductID": "raw-guid", "Name": "Cardboard", "Quantity": 10.0, "Unit": "Item"}],
+}
+
+COMPLETE_RESPONSE = {"TaskID": "task-1", "Status": "COMPLETED", "PickLines": PICK_LINES_RESPONSE["PickLines"]}
+
+FULL_ASSEMBLY_COMPLETED = dict(FULL_ASSEMBLY_AUTHORISED, Status="COMPLETED")
+
+
+def _mock_write_response(json_body, status_code=200):
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.json.return_value = json_body
+    resp.raise_for_status.return_value = None
+    return resp
+
+
+class CreateAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_posts_the_documented_finishedgoods_shape(self, mock_get, mock_post):
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        mock_post.return_value = _mock_write_response(CREATE_RESPONSE)
+
+        assembly = self.client.create_assembly('FG-ASSEMBLED', 5.0)
+
+        args, kwargs = mock_post.call_args
+        self.assertIn('/finishedGoods', args[0])
+        self.assertEqual(kwargs['json'], {
+            'ProductID': 'product-guid-1', 'ProductCode': 'FG-ASSEMBLED',
+            'Quantity': 5.0, 'Location': 'Main Warehouse',
+        })
+        self.assertEqual(assembly, Assembly(assembly_id='task-1', sku='FG-ASSEMBLED', status='DRAFT', qty=5.0))
+
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_errors_array_on_a_200_response_raises(self, mock_get, mock_post):
+        # Cin7 doesn't always use HTTP error statuses for a rejected write
+        # -- a populated Errors array on an HTTP 200 must not be read as success.
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        mock_post.return_value = _mock_write_response({**CREATE_RESPONSE, 'Errors': ['Quantity must be > 0']})
+        with self.assertRaises(RuntimeError):
+            self.client.create_assembly('FG-ASSEMBLED', 5.0)
+
+
+class AuthoriseAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_reads_order_lines_then_posts_status_authorised(self, mock_get, mock_post):
+        mock_get.side_effect = [_mock_write_response(ORDER_LINES_RESPONSE), _mock_write_response(FULL_ASSEMBLY_AUTHORISED)]
+        mock_post.return_value = _mock_write_response(AUTHORISE_RESPONSE)
+
+        assembly = self.client.authorise_assembly('task-1')
+
+        get_args, get_kwargs = mock_get.call_args_list[0]
+        self.assertIn('/finishedGoods/order', get_args[0])
+        self.assertEqual(get_kwargs['params'], {'TaskID': 'task-1'})
+        post_args, post_kwargs = mock_post.call_args
+        self.assertIn('/finishedGoods/order', post_args[0])
+        self.assertEqual(post_kwargs['json'], {
+            'TaskID': 'task-1', 'Status': 'AUTHORISED', 'OrderLines': ORDER_LINES_RESPONSE['OrderLines'],
+        })
+        self.assertEqual(assembly.status, 'AUTHORISED')
+
+
+class CompleteAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_reads_pick_lines_then_posts_status_completed(self, mock_get, mock_post):
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_AUTHORISED), _mock_write_response(PICK_LINES_RESPONSE), _mock_write_response(FULL_ASSEMBLY_COMPLETED)]
+        mock_post.return_value = _mock_write_response(COMPLETE_RESPONSE)
+
+        assembly = self.client.complete_assembly('task-1', 5.0)
+
+        post_args, post_kwargs = mock_post.call_args
+        self.assertIn('/finishedGoods/pick', post_args[0])
+        self.assertEqual(post_kwargs['json'], {
+            'TaskID': 'task-1', 'Status': 'COMPLETED', 'PickLines': PICK_LINES_RESPONSE['PickLines'],
+        })
+        self.assertEqual(assembly.status, 'COMPLETED')
+
+    @patch('cin7_client.requests.get')
+    def test_qty_mismatch_against_the_assemblys_own_quantity_raises(self, mock_get):
+        # Cin7's documented pick/complete request has no field to change
+        # the finished-good quantity at this stage -- a mismatch must
+        # never be silently completed against the wrong quantity.
+        mock_get.return_value = _mock_write_response(FULL_ASSEMBLY_AUTHORISED)  # Quantity: 5.0
+        with self.assertRaises(NotImplementedError):
+            self.client.complete_assembly('task-1', 999.0)
+
+
+class CloseAssemblyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.delete')
+    def test_deletes_with_void_true(self, mock_delete):
+        mock_delete.return_value = _mock_write_response({'TaskID': 'task-1', 'Status': 'VOIDED'})
+        self.client.close_assembly('task-1')
+        args, kwargs = mock_delete.call_args
+        self.assertIn('/finishedGoods', args[0])
+        self.assertEqual(kwargs['params'], {'ID': 'task-1', 'Void': 'true'})
+
+
+class AllocateAssemblyTests(unittest.TestCase):
+    def test_raises_rather_than_guess_the_status_value(self):
+        # Cin7's docs don't name a "picked/allocated but not completed"
+        # status -- see allocate_assembly's docstring.
+        client = Cin7Client(account_id='x', api_key='y')
+        with self.assertRaises(NotImplementedError):
+            client.allocate_assembly('task-1')
+
+
+class CreateAuthorisedAssemblyTests(unittest.TestCase):
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_composes_create_then_authorise_never_allocate_or_complete(self, mock_get, mock_post):
+        mock_get.side_effect = [
+            _mock_write_response(PRODUCT_FOR_CREATE),         # create_assembly's product lookup
+            _mock_write_response(ORDER_LINES_RESPONSE),        # authorise_assembly's order fetch
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),    # authorise_assembly's post-authorise refetch
+        ]
+        mock_post.side_effect = [_mock_write_response(CREATE_RESPONSE), _mock_write_response(AUTHORISE_RESPONSE)]
+
+        client = Cin7Client(account_id='x', api_key='y')
+        assembly = client.create_authorised_assembly('FG-ASSEMBLED', 5.0)
+
+        self.assertEqual(mock_post.call_count, 2)  # create + authorise only
+        self.assertEqual(assembly.status, 'AUTHORISED')
+
+
+class CompleteSmallAssemblyTests(unittest.TestCase):
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_composes_create_authorise_complete_at_the_actual_qty(self, mock_get, mock_post):
+        mock_get.side_effect = [
+            _mock_write_response(PRODUCT_FOR_CREATE),          # create_assembly's product lookup
+            _mock_write_response(ORDER_LINES_RESPONSE),         # authorise_assembly's order fetch
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),     # authorise_assembly's post-authorise refetch
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),     # complete_assembly's qty check (5.0 == 5.0)
+            _mock_write_response(PICK_LINES_RESPONSE),          # complete_assembly's pick fetch
+            _mock_write_response(FULL_ASSEMBLY_COMPLETED),      # complete_assembly's post-complete refetch
+        ]
+        mock_post.side_effect = [
+            _mock_write_response(CREATE_RESPONSE),
+            _mock_write_response(AUTHORISE_RESPONSE),
+            _mock_write_response(COMPLETE_RESPONSE),
+        ]
+
+        client = Cin7Client(account_id='x', api_key='y')
+        assembly = client.complete_small_assembly('FG-ASSEMBLED', 5.0)
+
+        self.assertEqual(mock_post.call_count, 3)  # create + authorise + complete, no allocate
+        self.assertEqual(assembly.status, 'COMPLETED')
+
+
+class GetOpenAssembliesTests(unittest.TestCase):
+    @patch('cin7_client.requests.get')
+    def test_excludes_completed_and_voided_and_filters_to_exact_sku(self, mock_get):
+        mock_get.return_value = _mock_write_response({
+            "Page": 1, "Total": 3,
+            "FinishedGoods": [
+                {"ProductCode": "FG-ASSEMBLED", "Status": "AUTHORISED", "Quantity": 5.0},
+                {"ProductCode": "FG-ASSEMBLED", "Status": "COMPLETED", "Quantity": 3.0},
+                {"ProductCode": "FG-OTHER-MATCHING-SEARCH", "Status": "DRAFT", "Quantity": 7.0},
+            ],
+        })
+        client = Cin7Client(account_id='x', api_key='y')
+        result = client.get_open_assemblies(['FG-ASSEMBLED'])
+        self.assertEqual(result, {'FG-ASSEMBLED': 5.0})
+
+
+class AdjustStockOnHandTests(unittest.TestCase):
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_two_step_draft_then_completed_with_target_qty_not_a_delta(self, mock_get, mock_post, mock_put):
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        draft_response = {
+            "TaskID": "adj-task-1", "Status": "DRAFT", "EffectiveDate": "2026-09-09T00:00:00",
+            "Lines": [{"SKU": "FG-ASSEMBLED", "ProductID": "product-guid-1", "Quantity": 600.0}],
+        }
+        mock_post.return_value = _mock_write_response(draft_response)
+        mock_put.return_value = _mock_write_response({**draft_response, "Status": "COMPLETED"})
+
+        client = Cin7Client(account_id='x', api_key='y')
+        task_id = client.adjust_stock_on_hand('FG-ASSEMBLED', 600.0, note='stocktake variance')
+
+        self.assertEqual(task_id, 'adj-task-1')
+        post_args, post_kwargs = mock_post.call_args
+        self.assertIn('/stockadjustment', post_args[0])
+        self.assertEqual(post_kwargs['json']['Status'], 'DRAFT')
+        self.assertEqual(post_kwargs['json']['Lines'][0]['Quantity'], 600.0)  # target level, not a delta
+        put_args, put_kwargs = mock_put.call_args
+        self.assertIn('/stockadjustment', put_args[0])
+        self.assertEqual(put_kwargs['json']['TaskID'], 'adj-task-1')
+        self.assertEqual(put_kwargs['json']['Status'], 'COMPLETED')
 
 
 if __name__ == '__main__':
