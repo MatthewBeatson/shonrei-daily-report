@@ -9,19 +9,31 @@ instead of guessed ones.
 
 Confirmed against a live account already (see production/README.md):
   - GET /ExternalApi/v2/product?SKU=<sku> is real and returns a list
-    wrapper ({Total, Page, Products: [...]}) -- BOM-ness lives directly
-    on the product record (BillOfMaterial, BOMType, QuantityToProduce,
-    MinimumBeforeReorder/ReorderQuantity), not a separate endpoint.
-  - Guessed /bom and /productavailability paths don't exist -- Cin7
-    doesn't send a real 404 status for a bad path, just its own "Page
-    not found" HTML page dressed up as HTTP 200. safe_json() below
-    detects that (checks Content-Type, not just status) so it isn't
-    mistaken for a real 200 response.
-  - Whether the SKU-filtered list expands BillOfMaterialsProducts (the
-    actual component lines) is still unconfirmed -- it came back empty
-    for one real assembly SKU. This version also fetches the same
-    product a second time by its own ID (not SKU) to check whether that
-    populates the BOM lines a list fetch doesn't.
+    wrapper ({Total, Page, Products: [...]}), and BOM-ness metadata
+    (BillOfMaterial, BOMType, QuantityToProduce,
+    MinimumBeforeReorder/ReorderQuantity) lives directly on the product
+    record. BUT: BillOfMaterialsProducts (where the actual component
+    lines should be) came back empty here even for a SKU confirmed to
+    have a real BOM configured in Cin7's own UI -- so this endpoint just
+    doesn't expand BOM lines, the earlier assumption that it does was
+    wrong. Fetching the same product by ID instead of SKU didn't change
+    that either.
+  - GET /ExternalApi/v2/ref/productavailability?SKU=<sku> is real and
+    gives OnHand / Allocated / Available (= OnHand - Allocated) / OnOrder.
+  - Guessed /bom, /product/availability, and /productavailability paths
+    don't exist -- Cin7 doesn't send a real 404 status for a bad path,
+    just its own "Page not found" HTML page dressed up as HTTP 200.
+    safe_json() below detects that (checks Content-Type, not just
+    status) so it isn't mistaken for a real 200 response.
+  - This version tries several more candidates for the real BOM-lines
+    endpoint, following the naming convention ref/productavailability
+    just confirmed (a "ref/" prefix, lowercase, no separators) rather
+    than guessing blind. If none of these hit either, the most reliable
+    next step is opening this SKU's Bill of Materials tab in Cin7's own
+    web UI with your browser's DevTools Network tab open -- Cin7's own
+    frontend has to call *some* API to render that tab, and whatever URL
+    shows up there is worth trying here next, confirmed rather than
+    guessed.
 
 Usage: python scripts/dump_sample_bom.py <SKU>
 Output: printed to stdout and saved to sample_bom_dump.json (gitignored --
@@ -89,14 +101,25 @@ def main():
     else:
         print('No product ID found from the SKU fetch -- skipping the by-ID re-fetch.')
 
-    # 3. A few plausible spellings for a dedicated availability endpoint --
-    #    /productavailability (already known to be wrong) plus two common
-    #    REST-nesting variants worth ruling in or out in the same run.
-    for label, path in [
-        ('availability_nested', 'product/availability'),
-        ('availability_ref', 'ref/productavailability'),
+    # 3. ref/productavailability is confirmed real -- re-fetch it here too
+    #    so one full run always captures both pieces in sample_bom_dump.json.
+    fetch('availability_ref', 'ref/productavailability', {'SKU': sku})
+
+    # 4. BOM-lines candidates, following the "ref/<lowercase, no
+    #    separators>" convention ref/productavailability just confirmed,
+    #    since a plain /product fetch doesn't expand BillOfMaterialsProducts
+    #    even for a SKU with a real BOM configured (see module docstring).
+    #    Tried by both SKU and ProductID where that distinction might matter.
+    for label, path, params in [
+        ('bom_ref_bom_sku', 'ref/bom', {'SKU': sku}),
+        ('bom_ref_productbom_sku', 'ref/productbom', {'SKU': sku}),
+        ('bom_ref_billofmaterial_sku', 'ref/billofmaterial', {'SKU': sku}),
+        ('bom_ref_billofmaterials_sku', 'ref/billofmaterials', {'SKU': sku}),
+        ('bom_nested_product_bom_sku', 'product/bom', {'SKU': sku}),
     ]:
-        fetch(label, path, {'SKU': sku})
+        if product_id and 'SKU' in params:
+            params = {**params, 'ProductID': product_id}
+        fetch(label, path, params)
 
     with open('sample_bom_dump.json', 'w', encoding='utf-8') as f:
         json.dump(dump, f, indent=2, default=str)

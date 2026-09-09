@@ -1,24 +1,35 @@
 """Thin wrapper over Cin7 Core's assembly + BOM endpoints.
 
-Stubs only -- this documents the calls the orchestrator needs and the
-shape of their inputs/outputs, matching the real Cin7 Core REST API
-(`/ExternalApi/v2/...`, same auth headers as `refresh-service`'s existing
-Cin7 pulls). Before wiring these for real, confirm each endpoint/field
-against live data the same way this repo already does for reporting --
-see `scripts/dump_sample_sale.py` for the pattern (read credentials the
-same way `scripts/print_local_credentials.py` does, print the raw
-response, never assume a field name from memory or docs alone).
+Most of this is still stubs documenting the calls the orchestrator
+needs, matching the real Cin7 Core REST API (`/ExternalApi/v2/...`, same
+auth headers as `refresh-service`'s existing Cin7 pulls). Before wiring
+the rest for real, confirm each endpoint/field against live data the
+same way this repo already does for reporting -- see
+`scripts/dump_sample_sale.py` / `scripts/dump_sample_bom.py` for the
+pattern (read credentials the same way `scripts/print_local_credentials.py`
+does, print the raw response, never assume a field name from memory or
+docs alone).
 
-Known real endpoints this maps onto (confirm exact paths/fields before
-using):
-    GET  /ExternalApi/v2/bom              BOM lines for a product
-    GET  /ExternalApi/v2/product/availability   on-hand / allocated / available
-    POST /ExternalApi/v2/assembly         create an assembly (draft)
-    POST /ExternalApi/v2/assembly         (Authorise / Allocate are status
-                                            transitions on the same object --
-                                            Cin7's API updates status via
-                                            the same endpoint with an ID)
-    POST /ExternalApi/v2/assembly/complete  complete, with actual quantity
+Confirmed against a live account (see `scripts/dump_sample_bom.py`'s
+output, and `production/README.md`):
+    GET /ExternalApi/v2/product?SKU=<sku>             product record,
+        including BillOfMaterial/BOMType/QuantityToProduce and the BOM
+        lines themselves under BillOfMaterialsProducts. NOT a separate
+        /bom endpoint -- BOM-ness lives on the product record.
+    GET /ExternalApi/v2/ref/productavailability?SKU=<sku>   on-hand
+        (OnHand), allocated (Allocated), and Cin7's own netted figure
+        (Available = OnHand - Allocated) per SKU. NOT
+        /ExternalApi/v2/product/availability -- that path 404s (as its
+        own branded HTML page, at HTTP 200 -- Cin7 doesn't send a real
+        404 status for an unknown path, see dump_sample_bom.py's
+        safe_json()).
+
+Still stubbed, needs its own confirm-first pass before use:
+    the assembly create/authorise/allocate/complete/cancel endpoints,
+    and the exact field names inside a *populated* BillOfMaterialsProducts
+    line (every SKU checked so far had an empty array -- get_bom's
+    mapping below is a best-effort guess, not confirmed, see its
+    docstring).
 """
 from __future__ import annotations
 import os
@@ -54,15 +65,86 @@ class Cin7Client:
 
     # -- reads, used by bom_explode's caller to build its inputs -------
 
+    def _get_product(self, sku: str) -> dict:
+        resp = requests.get(
+            f"{CIN7_BASE_URL}/product", headers=self._headers(), params={"SKU": sku}, timeout=60,
+        )
+        resp.raise_for_status()
+        products = resp.json().get("Products") or []
+        if not products:
+            raise ValueError(f"No Cin7 product found for SKU {sku!r}")
+        return products[0]
+
+    def _get_availability_row(self, sku: str) -> dict:
+        resp = requests.get(
+            f"{CIN7_BASE_URL}/ref/productavailability",
+            headers=self._headers(), params={"SKU": sku}, timeout=60,
+        )
+        resp.raise_for_status()
+        rows = resp.json().get("ProductAvailabilityList") or []
+        if not rows:
+            raise ValueError(f"No Cin7 availability row found for SKU {sku!r}")
+        return rows[0]
+
     def get_bom(self, sku: str) -> list[dict]:
-        """Returns this SKU's BOM lines, or [] if it's a purchased/raw
-        material with no BOM. Feeds bom_explode.explode_bom's `bom` dict.
+        """Returns this SKU's BOM lines, or [] if it's a genuine
+        purchased/raw material (BillOfMaterial: false). Feeds
+        bom_explode.explode_bom's `bom` dict, where [] specifically means
+        "nothing to build, treat as raw material" -- so this must never
+        return [] for a SKU that's actually an assembly with real
+        components, or the explosion would silently treat it as a raw
+        material and never build it.
+
+        NOT YET WIRED: GET /product's BillOfMaterialsProducts field came
+        back empty even for a SKU confirmed (by a human, in Cin7's own
+        UI) to have a real BOM configured -- so /product just doesn't
+        expand BOM lines, and the real endpoint for them is still
+        unconfirmed (see scripts/dump_sample_bom.py, which now tries
+        several more candidates). Raises rather than guessing: an
+        assembly SKU with an empty BillOfMaterialsProducts is treated as
+        "the real endpoint isn't wired yet", not "this SKU has no BOM".
         """
-        raise NotImplementedError("wire against live Cin7 BOM endpoint")
+        product = self._get_product(sku)
+        lines = product.get("BillOfMaterialsProducts") or []
+        if not lines:
+            if product.get("BillOfMaterial"):
+                raise NotImplementedError(
+                    f"{sku!r} is a Cin7 assembly (BillOfMaterial=true) but GET /product "
+                    "returned no BillOfMaterialsProducts lines -- the real BOM-lines endpoint "
+                    "isn't wired yet, see get_bom's docstring. Returning [] here would be "
+                    "wrong (bom_explode would treat this as a raw material)."
+                )
+            return []  # genuinely a purchased/raw material, BillOfMaterial is false
+        bom = []
+        for line in lines:
+            component_sku = line.get("SKU") or line.get("ComponentSKU") or line.get("ProductSKU")
+            qty_per = line.get("Quantity") or line.get("Qty") or line.get("QuantityRequired")
+            if component_sku is None or qty_per is None:
+                raise NotImplementedError(
+                    f"Unrecognised Cin7 BOM line shape for {sku!r}: {line!r} -- "
+                    "update get_bom's field-name mapping in cin7_client.py now that "
+                    "a real populated line is available."
+                )
+            bom.append({"component_sku": component_sku, "qty_per": qty_per})
+        return bom
 
     def get_availability(self, skus: list[str]) -> dict[str, float]:
-        """SKU -> on-hand available qty. Feeds explode_bom's `on_hand`."""
-        raise NotImplementedError("wire against live Cin7 availability endpoint")
+        """SKU -> Cin7's netted "Available" qty (OnHand - Allocated, per
+        GET /ExternalApi/v2/ref/productavailability, confirmed against a
+        live account). Feeds explode_bom's `on_hand`.
+
+        One request per SKU -- a bulk multi-SKU query hasn't been
+        confirmed to work on this endpoint, so this stays conservative
+        rather than guess at one.
+        """
+        result = {}
+        for sku in skus:
+            try:
+                row = self._get_availability_row(sku)
+                result[sku] = row["Available"]
+            except ValueError:
+                result[sku] = 0.0  # no Cin7 record for this SKU -- treat as no stock, not an error
+        return result
 
     def get_open_assemblies(self, skus: list[str]) -> dict[str, float]:
         """SKU -> total qty across assemblies not yet COMPLETED, so a
@@ -147,11 +229,15 @@ class Cin7Client:
     # confirm-before-wiring status as everything else in this file.
 
     def get_stock_on_hand(self, sku: str) -> float:
-        """Cin7's current on-hand qty for one SKU, snapshotted at count
-        time so the variance shown later reflects what Cin7 actually said
-        when the count was taken, not whatever it says by the time
-        someone reviews it."""
-        raise NotImplementedError("wire against live Cin7 product/availability endpoint")
+        """Cin7's current on-hand qty for one SKU (the raw `OnHand` field,
+        not the netted `Available` figure `get_availability` uses --
+        stocktake is a physical count, it should compare against Cin7's
+        physical on-hand, not stock minus what's allocated elsewhere),
+        snapshotted at count time so the variance shown later reflects
+        what Cin7 actually said when the count was taken, not whatever it
+        says by the time someone reviews it. Confirmed endpoint, see
+        get_availability's docstring."""
+        return self._get_availability_row(sku)["OnHand"]
 
     def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
         """Push a physical count to Cin7 as a stock adjustment, setting

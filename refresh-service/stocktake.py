@@ -26,15 +26,21 @@ def record_count(
     location: str | None = None, reported_via: str = 'manual', reported_by: str | None = None,
 ) -> dict:
     """Writes the count, snapshotting Cin7's on-hand qty for `sku` at this
-    moment if the (currently dry-run) get_stock_on_hand call succeeds --
-    a variance is nice-to-have, not a precondition for logging a count.
+    moment if the get_stock_on_hand call succeeds -- a variance is
+    nice-to-have, not a precondition for logging a count. Deliberately
+    broad except: NotImplementedError (a client that hasn't wired this
+    up yet), a bad/unknown SKU, and a live Cin7 network/API hiccup all
+    fail the same way here -- on_hand stays None and the count still
+    gets written. Only counted_qty's own validation above is allowed to
+    actually stop the count from being recorded.
     """
     if counted_qty < 0:
         raise StocktakeError('counted_qty must be >= 0')
 
     try:
         on_hand = cin7.get_stock_on_hand(sku)
-    except NotImplementedError:
+    except Exception as exc:  # noqa: BLE001 -- see docstring: recording the count always wins
+        print(f'stocktake: could not snapshot Cin7 on-hand for {sku!r}: {exc}', flush=True)
         on_hand = None
 
     with conn.cursor() as cur:

@@ -484,14 +484,56 @@ the legacy `/production-admin` path, where "back to dashboard" genuinely
 is just `/`), and confirmed every production API route still correctly
 401s with no `Authorization` header.
 
+## Confirmed Cin7 reads (2026-09-09)
+
+First real run of `scripts/dump_sample_bom.py` against a live account.
+Two endpoints wired for real in `cin7_client.py`, unit tested against
+the exact captured response shapes (`test_cin7_client.py`, mocked
+`requests`, no live Cin7 needed to run them):
+
+- **`GET /ExternalApi/v2/product?SKU=<sku>`** -- real. `BillOfMaterial`,
+  `BOMType`, `QuantityToProduce`, `MinimumBeforeReorder`/`ReorderQuantity`
+  are all real fields directly on the product record.
+- **`GET /ExternalApi/v2/ref/productavailability?SKU=<sku>`** -- real.
+  `OnHand`, `Allocated`, `Available` (= `OnHand - Allocated`, Cin7's own
+  netted figure), `OnOrder`. `get_availability` (feeds `bom_explode`'s
+  on-hand netting) uses `Available`; `get_stock_on_hand` (stocktake's
+  variance) uses the raw `OnHand` -- deliberately different fields for
+  different purposes, see each method's docstring.
+- **Ruled out**: `/bom`, `/product/availability`, `/productavailability`
+  all 404 -- except Cin7 doesn't send a real 404 status, it serves its
+  own branded "Page not found" HTML page at HTTP 200. `safe_json()` in
+  the dump script checks `Content-Type`, not just status, so this
+  doesn't get mistaken for a real response.
+
+**Still open: where BOM component lines actually live.** `GET /product`'s
+`BillOfMaterialsProducts` field is confirmed to be where they'd be *if*
+present, but it came back empty even for a SKU confirmed (in Cin7's own
+UI, by a human) to have a real BOM configured -- so that endpoint just
+doesn't expand BOM lines, full stop. `get_bom` in `cin7_client.py`
+reflects this honestly: it raises `NotImplementedError` for an assembly
+SKU with empty `BillOfMaterialsProducts` rather than returning `[]`
+(which `bom_explode` would read as "this is a raw material, nothing to
+build" -- silently wrong for a real assembly, worse than an explicit
+error). `scripts/dump_sample_bom.py` now also tries several candidates
+following the `ref/<lowercase>` naming convention
+`ref/productavailability` just confirmed (`ref/bom`, `ref/productbom`,
+`ref/billofmaterial(s)`, `product/bom`) -- if none of those land, the
+most reliable next step is opening a BOM'd SKU's Bill of Materials tab
+in Cin7's own web UI with the browser's DevTools Network tab open, since
+Cin7's own frontend has to call *some* API to render it.
+
 ## Still not built
 
-- **Real Cin7 calls everywhere they're currently dry-run**: SO backorder
-  extraction (`backorder_targets.extract_demand_lines`), the
+- **The real BOM-lines endpoint** (see above) -- once confirmed,
+  `get_bom`'s per-line field mapping (currently a documented best-effort
+  guess, see its docstring and `test_cin7_client.py`) needs checking
+  against a real populated line too.
+- **Real Cin7 writes everywhere they're currently dry-run**: SO
+  backorder extraction (`backorder_targets.extract_demand_lines`), the
   Create/Authorise/Allocate/Complete/Cancel assembly calls, and
-  stocktake's `get_stock_on_hand`/`adjust_stock_on_hand` -- all confirmed
-  the same way, via `scripts/dump_sample_bom.py` (worth extending to
-  cover the stock-adjustment endpoint shape too, not just BOM/assembly).
+  stocktake's `adjust_stock_on_hand` -- confirmed the same way, via
+  `scripts/dump_sample_bom.py`.
 - **QR-scan-to-select on the general-path floor screen** -- Batches and
   Stocktake both already have barcode/manual entry; the general
   BOM-explosion path (`production_runs`) has no floor-app screen of its
