@@ -95,14 +95,18 @@ class Cin7Client:
         components, or the explosion would silently treat it as a raw
         material and never build it.
 
-        NOT YET WIRED: GET /product's BillOfMaterialsProducts field came
-        back empty even for a SKU confirmed (by a human, in Cin7's own
-        UI) to have a real BOM configured -- so /product just doesn't
-        expand BOM lines, and the real endpoint for them is still
-        unconfirmed (see scripts/dump_sample_bom.py, which now tries
-        several more candidates). Raises rather than guessing: an
-        assembly SKU with an empty BillOfMaterialsProducts is treated as
-        "the real endpoint isn't wired yet", not "this SKU has no BOM".
+        Line shape is confirmed from Cin7's own published API docs (the
+        "Bill Of Material Product Model", https://dearinventory.docs.apiary.io/
+        -- ComponentProductID, ProductCode, Quantity, WastagePercent/
+        WastageQuantity, CostPercentage), not a guess. What's NOT yet
+        confirmed against a live response is that GET /product actually
+        populates BillOfMaterialsProducts for a real assembly -- it came
+        back empty for a SKU confirmed (by a human, in Cin7's own UI) to
+        have a real BOM configured. Kept defensive until that's seen for
+        real: an assembly SKU with an empty BillOfMaterialsProducts still
+        raises rather than silently returning [] (bom_explode would
+        treat that as "this is a raw material, nothing to build" --
+        wrong for a real assembly).
         """
         product = self._get_product(sku)
         lines = product.get("BillOfMaterialsProducts") or []
@@ -110,20 +114,21 @@ class Cin7Client:
             if product.get("BillOfMaterial"):
                 raise NotImplementedError(
                     f"{sku!r} is a Cin7 assembly (BillOfMaterial=true) but GET /product "
-                    "returned no BillOfMaterialsProducts lines -- the real BOM-lines endpoint "
-                    "isn't wired yet, see get_bom's docstring. Returning [] here would be "
-                    "wrong (bom_explode would treat this as a raw material)."
+                    "returned no BillOfMaterialsProducts lines -- confirm this field actually "
+                    "populates for a real assembly before trusting an empty result, see "
+                    "get_bom's docstring. Returning [] here would be wrong (bom_explode would "
+                    "treat this as a raw material)."
                 )
             return []  # genuinely a purchased/raw material, BillOfMaterial is false
         bom = []
         for line in lines:
-            component_sku = line.get("SKU") or line.get("ComponentSKU") or line.get("ProductSKU")
-            qty_per = line.get("Quantity") or line.get("Qty") or line.get("QuantityRequired")
+            component_sku = line.get("ProductCode")
+            qty_per = line.get("Quantity")
             if component_sku is None or qty_per is None:
                 raise NotImplementedError(
                     f"Unrecognised Cin7 BOM line shape for {sku!r}: {line!r} -- "
-                    "update get_bom's field-name mapping in cin7_client.py now that "
-                    "a real populated line is available."
+                    "doesn't match the documented Bill Of Material Product Model "
+                    "(ProductCode/Quantity), update get_bom's mapping in cin7_client.py."
                 )
             bom.append({"component_sku": component_sku, "qty_per": qty_per})
         return bom

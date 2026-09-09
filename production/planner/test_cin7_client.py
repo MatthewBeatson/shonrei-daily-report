@@ -84,18 +84,21 @@ class GetBomTests(unittest.TestCase):
             self.client.get_bom('NOPE')
 
     @patch('cin7_client.requests.get')
-    def test_populated_line_with_sku_and_quantity_fields_maps_correctly(self, mock_get):
-        # Best-effort field-name guess (see get_bom's docstring) -- this
-        # is the shape it's expected to handle once a real populated
-        # line is confirmed; update this fixture alongside the mapping
-        # once scripts/dump_sample_bom.py returns one for real.
+    def test_populated_line_maps_the_documented_field_names_correctly(self, mock_get):
+        # Shape confirmed from Cin7's own published API docs (the "Bill
+        # Of Material Product Model" -- ComponentProductID, ProductCode,
+        # Quantity, WastagePercent/WastageQuantity, CostPercentage), not
+        # a guess -- see get_bom's docstring. Still not seen populated in
+        # a live GET /product response, so this fixture is what the docs
+        # say to expect, not yet what's been observed.
         response = {
             "Total": 1, "Page": 1,
             "Products": [{
                 "SKU": "FG-ASSEMBLED",
+                "BillOfMaterial": True,
                 "BillOfMaterialsProducts": [
-                    {"SKU": "RAW-CARDBOARD", "Quantity": 2.0},
-                    {"SKU": "RAW-HINGE", "Quantity": 4.0},
+                    {"ComponentProductID": "id-1", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0},
+                    {"ComponentProductID": "id-2", "ProductCode": "RAW-HINGE", "Name": "Hinge", "Quantity": 4.0},
                 ],
             }],
         }
