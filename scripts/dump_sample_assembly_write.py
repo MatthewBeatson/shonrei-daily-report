@@ -132,6 +132,7 @@ def main():
             'Quantity': line['Quantity'], 'TotalQuantity': line['TotalQuantity'],
             'WastagePercent': line['WastagePercent'], 'WastageQuantity': line['WastageQuantity'],
             'ExpenseAccount': line['ExpenseAccount'],
+            **({'PriceTier': line['PriceTier']} if 'PriceTier' in line else {}),
         }
         for line in component_lines
     ]
@@ -211,6 +212,11 @@ def build_component_lines(product, build_qty):
             'WastagePercent': 0,
             'WastageQuantity': 0,
             'ExpenseAccount': line.get('ExpenseAccount') or '',
+            # Confirmed live, 2026-09-11: a labour line needs a PriceTier
+            # for Cin7 to load/compute its cost -- Shonrei uses "General
+            # customers", which is PriceTier 1. Passed through from the
+            # BOM's own PriceTier field, defaulting to 1 only if missing.
+            'PriceTier': line.get('PriceTier') or 1,
         })
     return lines
 

@@ -256,7 +256,7 @@ PRODUCT_WITH_BOM = {
 # labour cost never gets allocated -- see _component_lines_for_build).
 EXPECTED_ORDER_LINES = [
     {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": ""},
-    {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 1.5, "TotalQuantity": 7.5, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": "222/00A"},
+    {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 1.5, "TotalQuantity": 7.5, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": "222/00A", "PriceTier": 1},
 ]
 # PickLines excludes the labour line -- a live test against WIP110
 # (2026-09-11) got a 404 ("... or SKU '' not found.") when a labour

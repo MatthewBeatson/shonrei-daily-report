@@ -608,6 +608,13 @@ items, while Order authorises the whole costed BOM including labour.
 only (labour lines are the ones `_component_lines_for_build` gives an
 empty `ProductCode`, which is what the filter checks).
 
+**A labour line also needs a `PriceTier` for Cin7 to load/compute its
+cost** -- without one it authorises fine but costs nothing. Shonrei uses
+the "General customers" tier, which is `PriceTier: 1` (also visible on
+the raw BOM data itself -- WIPMT20T's labour lines already carry
+`"PriceTier": 1`). `_component_lines_for_build` now passes this straight
+through from the BOM rather than omitting it.
+
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
 Create -> Authorise -> Complete (with a confirmation prompt before each

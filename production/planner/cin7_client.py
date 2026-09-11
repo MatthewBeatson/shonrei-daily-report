@@ -371,6 +371,13 @@ class Cin7Client:
                 "WastagePercent": 0,
                 "WastageQuantity": 0,
                 "ExpenseAccount": line.get("ExpenseAccount") or "",
+                # A labour line needs a PriceTier for Cin7 to load/compute
+                # its cost -- without one the line authorises fine but
+                # costs nothing (confirmed live, 2026-09-11: Shonrei uses
+                # the "General customers" tier, which is PriceTier 1 --
+                # passed straight through from the BOM's own PriceTier
+                # field, defaulting to 1 only if Cin7 ever omits it).
+                "PriceTier": line.get("PriceTier") or 1,
             })
         return lines
 
