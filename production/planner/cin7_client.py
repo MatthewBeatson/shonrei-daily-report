@@ -40,17 +40,18 @@ The write side is wired from Cin7's own documented endpoint shapes
 resource and the "Stock Adjustment" resource -- Cin7 calls a standard
 assembly a "Finished Good" in the API, not "Assembly"):
     POST /ExternalApi/v2/finishedGoods                    Create.
-    GET  /ExternalApi/v2/finishedGoods/order?TaskID=<id>   read the
-        auto-populated OrderLines (from the product's BOM) before
-        authorising -- Cin7's own snapshot, not rebuilt from get_bom.
     POST /ExternalApi/v2/finishedGoods/order               Authorise
-        (Status: "AUTHORISED", + those OrderLines).
-    GET  /ExternalApi/v2/finishedGoods/pick?TaskID=<id>    read the
-        auto-populated PickLines before completing.
+        (Status: "AUTHORISED", + OrderLines -- built from the product's
+        own BOM by _component_lines_for_build, NOT read back from Cin7:
+        a live test (WIP110, 2026-09-11) found GET
+        /finishedGoods/order?TaskID=<id> comes back with a genuinely
+        empty OrderLines array even for a real assembly with a real BOM
+        -- Cin7 does not auto-populate this at Create time despite its
+        own docs/UI implying otherwise).
     POST /ExternalApi/v2/finishedGoods/pick                Complete
-        (Status: "COMPLETED", + those PickLines) -- the one worked
-        example in Cin7's docs. There is no documented status value for
-        "picked/allocated but not yet completed" -- see
+        (Status: "COMPLETED", + PickLines -- same story, built from the
+        BOM rather than read back). There is no documented status value
+        for "picked/allocated but not yet completed" -- see
         allocate_assembly's docstring, that stage is deliberately not
         wired.
     DELETE /ExternalApi/v2/finishedGoods?ID=<id>&Void=true  Cancel. The
@@ -307,15 +308,36 @@ class Cin7Client:
         resp.raise_for_status()
         return resp.json()
 
-    def _get_order(self, assembly_id: str) -> dict:
-        resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods/order", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
-        resp.raise_for_status()
-        return resp.json()
+    def _component_lines_for_build(self, sku: str, build_qty: float) -> list[dict]:
+        """Real per-component BOM lines for one build of `sku` at
+        `build_qty`, scaled to totals -- feeds both authorise_assembly's
+        OrderLines and complete_assembly's PickLines.
 
-    def _get_pick(self, assembly_id: str) -> dict:
-        resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods/pick", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
-        resp.raise_for_status()
-        return resp.json()
+        Cin7 does NOT auto-populate OrderLines/PickLines from the
+        product's BOM at Create time, despite what its own docs and UI
+        workflow imply -- a live test against WIP110 (2026-09-11) came
+        back with a genuinely empty OrderLines array via
+        GET /finishedGoods/order even though the product has a real,
+        populated BOM (confirmed via get_bom), and authorising with that
+        empty list 400'd ("Should be at least one order line."). So this
+        builds the lines explicitly from the product record instead of
+        trusting Cin7 to have already done it.
+        """
+        product = self._get_product(sku, include_bom=True)
+        raw_lines = product.get("BillOfMaterialsProducts") or []
+        lines = []
+        for line in raw_lines:
+            qty_per = line.get("Quantity") or 0
+            lines.append({
+                "ProductID": line.get("ComponentProductID"),
+                "ProductCode": line.get("ProductCode"),
+                "Name": line.get("Name"),
+                "Quantity": qty_per,
+                "TotalQuantity": qty_per * build_qty,
+                "WastagePercent": line.get("WastagePercent") or 0,
+                "WastageQuantity": line.get("WastageQuantity") or 0,
+            })
+        return lines
 
     @staticmethod
     def _assembly_from(body: dict) -> Assembly:
@@ -360,14 +382,21 @@ class Cin7Client:
         return self._assembly_from(body)
 
     def authorise_assembly(self, assembly_id: str) -> Assembly:
-        """Stage 2: Authorise. POST /finishedGoods/order with the
-        OrderLines Cin7 auto-populated at Create time (fetched fresh via
-        GET first -- Cin7's own snapshot is authorised, not a rebuild)."""
-        order = self._get_order(assembly_id)
+        """Stage 2: Authorise. POST /finishedGoods/order with OrderLines
+        built from the product's own BOM (see _component_lines_for_build
+        -- Cin7 does NOT auto-populate these at Create time, confirmed
+        live 2026-09-11)."""
+        full = self._get_full_assembly(assembly_id)
+        order_lines = self._component_lines_for_build(full.get("ProductCode"), full.get("Quantity") or 0)
+        if not order_lines:
+            raise NotImplementedError(
+                f"authorise_assembly({assembly_id!r}): no BOM lines found for "
+                f"{full.get('ProductCode')!r} -- can't authorise an assembly with no components"
+            )
         body = self._post_json("finishedGoods/order", {
             "TaskID": assembly_id,
             "Status": "AUTHORISED",
-            "OrderLines": order.get("OrderLines") or [],
+            "OrderLines": order_lines,
         })
         return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 
@@ -396,13 +425,12 @@ class Cin7Client:
         )
 
     def complete_assembly(self, assembly_id: str, actual_qty: float) -> Assembly:
-        """Stage 4: Complete. POST /finishedGoods/pick with the
-        auto-populated PickLines and Status="COMPLETED" -- the one worked
-        example in Cin7's docs, which also carries Account/WIPAccount and
-        CompletionDate/WIPDate on this same call. Sent pre-emptively
-        (Create needed Account/WIPAccount too, confirmed live 2026-09-11 --
-        see create_assembly's docstring) rather than wait to hit the same
-        400 twice; CompletionDate/WIPDate default to right now.
+        """Stage 4: Complete. POST /finishedGoods/pick with PickLines
+        built from the product's own BOM (same reasoning as
+        authorise_assembly -- Cin7 doesn't auto-populate these either)
+        and Status="COMPLETED". Also carries Account/WIPAccount and
+        CompletionDate/WIPDate, per Cin7's one worked pick/complete
+        example in its docs; CompletionDate/WIPDate default to right now.
 
         `actual_qty` must match the assembly's own Quantity (set at
         Create) -- the documented pick/complete request has no field for
@@ -421,12 +449,22 @@ class Cin7Client:
                 f"is {existing_qty}, not {actual_qty} -- Cin7's documented pick/complete request "
                 "has no field to change it at this stage, see this method's docstring"
             )
-        pick = self._get_pick(assembly_id)
+        component_lines = self._component_lines_for_build(full.get("ProductCode"), actual_qty)
+        pick_lines = [
+            {
+                "ProductID": line["ProductID"],
+                "ProductCode": line["ProductCode"],
+                "Name": line["Name"],
+                "Quantity": line["TotalQuantity"],
+                "Unit": "",
+            }
+            for line in component_lines
+        ]
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         body = self._post_json("finishedGoods/pick", {
             "TaskID": assembly_id,
             "Status": "COMPLETED",
-            "PickLines": pick.get("PickLines") or [],
+            "PickLines": pick_lines,
             "Account": CIN7_FINISHED_GOODS_ACCOUNT,
             "WIPAccount": CIN7_WIP_ACCOUNT,
             "CompletionDate": now,

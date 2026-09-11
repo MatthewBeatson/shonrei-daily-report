@@ -16,6 +16,14 @@ Cin7's own UI instead this round. See adjust_stock_on_hand in
 cin7_client.py for the stock-adjustment shape whenever that needs its
 own live confirmation later.
 
+Cin7 does NOT auto-populate OrderLines/PickLines from the product's BOM
+at Create time (confirmed live against WIP110, 2026-09-11 -- an empty
+GET /finishedGoods/order?TaskID=<id>, and Cin7's own "New Assembly" UI
+screen has a manual "Load BOM" button for exactly this, with "Click the
+'Load BOM' button to view the bill of materials" shown until you do).
+This script builds those lines itself from the BOM already fetched in
+step 1, the same way cin7_client.py's _component_lines_for_build does.
+
 Run this ON THIS MACHINE, credentials come out of Windows Credential
 Manager (same as every other dump_sample_*.py script).
 
@@ -113,29 +121,42 @@ def main():
         save_and_exit()
     print(f"Created TaskID={task_id} Status={created.get('Status')}")
 
+    component_lines = build_component_lines(p, qty)
+
     # -- 3. Authorise ------------------------------------------------------
-    order = get_json(headers, 'finishedGoods/order', {'TaskID': task_id}, label='order_before_authorise')
-    if not confirm(f"About to authorise TaskID={task_id} with {len(order.get('OrderLines') or [])} order line(s) "
-                    "(printed above in the saved JSON)."):
+    order_lines = [
+        {
+            'ProductID': line['ProductID'], 'ProductCode': line['ProductCode'], 'Name': line['Name'],
+            'Quantity': line['Quantity'], 'TotalQuantity': line['TotalQuantity'],
+            'WastagePercent': line['WastagePercent'], 'WastageQuantity': line['WastageQuantity'],
+        }
+        for line in component_lines
+    ]
+    if not confirm(f"About to authorise TaskID={task_id} with {len(order_lines)} order line(s), "
+                    "built from the BOM fetched in step 1 (printed above)."):
         save_and_exit()
     authorised = post_json(headers, 'finishedGoods/order', {
         'TaskID': task_id,
         'Status': 'AUTHORISED',
-        'OrderLines': order.get('OrderLines') or [],
+        'OrderLines': order_lines,
     }, label='authorise_assembly')
     print(f"Authorised: Status={authorised.get('Status')}")
 
     # -- 4. Complete (no separate Allocate call -- see cin7_client.py's --
     #    allocate_assembly docstring for why that stage is skipped here)
-    pick = get_json(headers, 'finishedGoods/pick', {'TaskID': task_id}, label='pick_before_complete')
-    if not confirm(f"About to COMPLETE TaskID={task_id} with {len(pick.get('PickLines') or [])} pick line(s) -- "
+    pick_lines = [
+        {'ProductID': line['ProductID'], 'ProductCode': line['ProductCode'], 'Name': line['Name'],
+         'Quantity': line['TotalQuantity'], 'Unit': ''}
+        for line in component_lines
+    ]
+    if not confirm(f"About to COMPLETE TaskID={task_id} with {len(pick_lines)} pick line(s) -- "
                     "this is the step that actually consumes component stock and creates finished-good stock."):
         save_and_exit()
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
     completed = post_json(headers, 'finishedGoods/pick', {
         'TaskID': task_id,
         'Status': 'COMPLETED',
-        'PickLines': pick.get('PickLines') or [],
+        'PickLines': pick_lines,
         'Account': FINISHED_GOODS_ACCOUNT,
         'WIPAccount': WIP_ACCOUNT,
         'CompletionDate': now,
@@ -148,6 +169,25 @@ def main():
     print(f"\nTaskID for this assembly (for voiding manually in Cin7's UI later): {task_id}")
 
     save_and_exit()
+
+
+def build_component_lines(product, build_qty):
+    """Mirrors cin7_client.py's _component_lines_for_build -- Cin7 won't
+    do this for us (see the module docstring), so scale the product's own
+    BillOfMaterialsProducts lines to real totals for this build."""
+    lines = []
+    for line in product.get('BillOfMaterialsProducts') or []:
+        qty_per = line.get('Quantity') or 0
+        lines.append({
+            'ProductID': line.get('ComponentProductID'),
+            'ProductCode': line.get('ProductCode'),
+            'Name': line.get('Name'),
+            'Quantity': qty_per,
+            'TotalQuantity': qty_per * build_qty,
+            'WastagePercent': line.get('WastagePercent') or 0,
+            'WastageQuantity': line.get('WastageQuantity') or 0,
+        })
+    return lines
 
 
 def confirm(message: str) -> bool:

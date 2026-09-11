@@ -226,25 +226,40 @@ CREATE_RESPONSE = {
     "OrderLines": [], "PickLines": [], "Transactions": [], "Errors": [],
 }
 
-ORDER_LINES_RESPONSE = {
-    "TaskID": "task-1", "Status": "DRAFT",
-    "OrderLines": [{"ProductCode": "RAW-CARDBOARD", "ProductID": "raw-guid", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0}],
-}
-
-AUTHORISE_RESPONSE = {"TaskID": "task-1", "Status": "AUTHORISED", "OrderLines": ORDER_LINES_RESPONSE["OrderLines"]}
-
-FULL_ASSEMBLY_AUTHORISED = {
-    "TaskID": "task-1", "ID": "record-guid-1", "Status": "AUTHORISED",
+FULL_ASSEMBLY_DRAFT = {
+    "TaskID": "task-1", "ID": "record-guid-1", "Status": "DRAFT",
     "ProductCode": "FG-ASSEMBLED", "ProductID": "product-guid-1", "Quantity": 5.0,
     "Location": "Main Warehouse", "LocationID": "loc-guid",
 }
 
-PICK_LINES_RESPONSE = {
-    "TaskID": "task-1", "Status": "AUTHORISED",
-    "PickLines": [{"ProductCode": "RAW-CARDBOARD", "ProductID": "raw-guid", "Name": "Cardboard", "Quantity": 10.0, "Unit": "Item"}],
+# Cin7 does NOT auto-populate OrderLines/PickLines from this at Create
+# time (confirmed live against WIP110, 2026-09-11 -- see
+# cin7_client.py's module docstring) -- authorise_assembly/
+# complete_assembly fetch this directly and scale it themselves.
+PRODUCT_WITH_BOM = {
+    "Total": 1, "Page": 1,
+    "Products": [{
+        "ID": "product-guid-1", "SKU": "FG-ASSEMBLED", "DefaultLocation": "Main Warehouse",
+        "BillOfMaterialsProducts": [
+            {"ComponentProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "WastagePercent": 0, "WastageQuantity": 0},
+        ],
+    }],
 }
 
-COMPLETE_RESPONSE = {"TaskID": "task-1", "Status": "COMPLETED", "PickLines": PICK_LINES_RESPONSE["PickLines"]}
+# What authorise_assembly/complete_assembly should build from PRODUCT_WITH_BOM
+# at build qty 5.0 (2.0 per unit * 5.0 = 10.0 total).
+EXPECTED_ORDER_LINES = [
+    {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0, "WastagePercent": 0, "WastageQuantity": 0},
+]
+EXPECTED_PICK_LINES = [
+    {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 10.0, "Unit": ""},
+]
+
+AUTHORISE_RESPONSE = {"TaskID": "task-1", "Status": "AUTHORISED", "OrderLines": EXPECTED_ORDER_LINES}
+
+FULL_ASSEMBLY_AUTHORISED = dict(FULL_ASSEMBLY_DRAFT, Status="AUTHORISED")
+
+COMPLETE_RESPONSE = {"TaskID": "task-1", "Status": "COMPLETED", "PickLines": EXPECTED_PICK_LINES}
 
 FULL_ASSEMBLY_COMPLETED = dict(FULL_ASSEMBLY_AUTHORISED, Status="COMPLETED")
 
@@ -297,21 +312,33 @@ class AuthoriseAssemblyTests(unittest.TestCase):
 
     @patch('cin7_client.requests.post')
     @patch('cin7_client.requests.get')
-    def test_reads_order_lines_then_posts_status_authorised(self, mock_get, mock_post):
-        mock_get.side_effect = [_mock_write_response(ORDER_LINES_RESPONSE), _mock_write_response(FULL_ASSEMBLY_AUTHORISED)]
+    def test_builds_order_lines_from_the_bom_then_posts_status_authorised(self, mock_get, mock_post):
+        # Cin7 doesn't hand these back pre-populated (see PRODUCT_WITH_BOM's
+        # comment) -- authorise_assembly fetches the assembly's own record
+        # to get SKU/qty, then the product's BOM to build OrderLines itself.
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_DRAFT), _mock_write_response(PRODUCT_WITH_BOM), _mock_write_response(FULL_ASSEMBLY_AUTHORISED)]
         mock_post.return_value = _mock_write_response(AUTHORISE_RESPONSE)
 
         assembly = self.client.authorise_assembly('task-1')
 
-        get_args, get_kwargs = mock_get.call_args_list[0]
-        self.assertIn('/finishedGoods/order', get_args[0])
-        self.assertEqual(get_kwargs['params'], {'TaskID': 'task-1'})
+        first_get_args, first_get_kwargs = mock_get.call_args_list[0]
+        self.assertIn('/finishedGoods', first_get_args[0])
+        self.assertEqual(first_get_kwargs['params'], {'TaskID': 'task-1'})
+        second_get_args, second_get_kwargs = mock_get.call_args_list[1]
+        self.assertIn('/product', second_get_args[0])
+        self.assertEqual(second_get_kwargs['params'], {'SKU': 'FG-ASSEMBLED', 'IncludeBOM': 'true'})
         post_args, post_kwargs = mock_post.call_args
         self.assertIn('/finishedGoods/order', post_args[0])
         self.assertEqual(post_kwargs['json'], {
-            'TaskID': 'task-1', 'Status': 'AUTHORISED', 'OrderLines': ORDER_LINES_RESPONSE['OrderLines'],
+            'TaskID': 'task-1', 'Status': 'AUTHORISED', 'OrderLines': EXPECTED_ORDER_LINES,
         })
         self.assertEqual(assembly.status, 'AUTHORISED')
+
+    @patch('cin7_client.requests.get')
+    def test_no_bom_lines_raises_rather_than_authorise_an_empty_order(self, mock_get):
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_DRAFT), _mock_write_response({"Products": [{"ID": "product-guid-1", "SKU": "FG-ASSEMBLED", "BillOfMaterialsProducts": []}]})]
+        with self.assertRaises(NotImplementedError):
+            self.client.authorise_assembly('task-1')
 
 
 class CompleteAssemblyTests(unittest.TestCase):
@@ -320,8 +347,10 @@ class CompleteAssemblyTests(unittest.TestCase):
 
     @patch('cin7_client.requests.post')
     @patch('cin7_client.requests.get')
-    def test_reads_pick_lines_then_posts_status_completed(self, mock_get, mock_post):
-        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_AUTHORISED), _mock_write_response(PICK_LINES_RESPONSE), _mock_write_response(FULL_ASSEMBLY_COMPLETED)]
+    def test_builds_pick_lines_from_the_bom_then_posts_status_completed(self, mock_get, mock_post):
+        # Same story as authorise_assembly -- Cin7 doesn't hand these back
+        # pre-populated, complete_assembly builds PickLines from the BOM.
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_AUTHORISED), _mock_write_response(PRODUCT_WITH_BOM), _mock_write_response(FULL_ASSEMBLY_COMPLETED)]
         mock_post.return_value = _mock_write_response(COMPLETE_RESPONSE)
 
         assembly = self.client.complete_assembly('task-1', 5.0)
@@ -332,7 +361,7 @@ class CompleteAssemblyTests(unittest.TestCase):
         completion_date, wip_date = sent.pop('CompletionDate'), sent.pop('WIPDate')
         self.assertEqual(completion_date, wip_date)  # both stamped "now" together
         self.assertEqual(sent, {
-            'TaskID': 'task-1', 'Status': 'COMPLETED', 'PickLines': PICK_LINES_RESPONSE['PickLines'],
+            'TaskID': 'task-1', 'Status': 'COMPLETED', 'PickLines': EXPECTED_PICK_LINES,
             # Same Account/WIPAccount as Create -- Cin7's docs show the
             # Complete call carrying them too, see complete_assembly's docstring.
             'Account': '720', 'WIPAccount': '721B',
@@ -377,7 +406,8 @@ class CreateAuthorisedAssemblyTests(unittest.TestCase):
     def test_composes_create_then_authorise_never_allocate_or_complete(self, mock_get, mock_post):
         mock_get.side_effect = [
             _mock_write_response(PRODUCT_FOR_CREATE),         # create_assembly's product lookup
-            _mock_write_response(ORDER_LINES_RESPONSE),        # authorise_assembly's order fetch
+            _mock_write_response(FULL_ASSEMBLY_DRAFT),         # authorise_assembly's own-record fetch
+            _mock_write_response(PRODUCT_WITH_BOM),            # authorise_assembly's BOM fetch
             _mock_write_response(FULL_ASSEMBLY_AUTHORISED),    # authorise_assembly's post-authorise refetch
         ]
         mock_post.side_effect = [_mock_write_response(CREATE_RESPONSE), _mock_write_response(AUTHORISE_RESPONSE)]
@@ -395,10 +425,11 @@ class CompleteSmallAssemblyTests(unittest.TestCase):
     def test_composes_create_authorise_complete_at_the_actual_qty(self, mock_get, mock_post):
         mock_get.side_effect = [
             _mock_write_response(PRODUCT_FOR_CREATE),          # create_assembly's product lookup
-            _mock_write_response(ORDER_LINES_RESPONSE),         # authorise_assembly's order fetch
+            _mock_write_response(FULL_ASSEMBLY_DRAFT),          # authorise_assembly's own-record fetch
+            _mock_write_response(PRODUCT_WITH_BOM),             # authorise_assembly's BOM fetch
             _mock_write_response(FULL_ASSEMBLY_AUTHORISED),     # authorise_assembly's post-authorise refetch
             _mock_write_response(FULL_ASSEMBLY_AUTHORISED),     # complete_assembly's qty check (5.0 == 5.0)
-            _mock_write_response(PICK_LINES_RESPONSE),          # complete_assembly's pick fetch
+            _mock_write_response(PRODUCT_WITH_BOM),             # complete_assembly's BOM fetch
             _mock_write_response(FULL_ASSEMBLY_COMPLETED),      # complete_assembly's post-complete refetch
         ]
         mock_post.side_effect = [

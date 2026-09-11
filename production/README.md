@@ -571,6 +571,23 @@ alone:
   `CompletionDate`/`WIPDate`), `complete_assembly` now sends them too,
   pre-emptively, rather than wait to hit the same 400 a second time. See
   `CIN7_FINISHED_GOODS_ACCOUNT`/`CIN7_WIP_ACCOUNT` in cin7_client.py.
+- Against WIP110 again: authorising with the (empty) OrderLines Cin7
+  handed back 400'd -- `"Should be at least one order line."`. Confirmed
+  Cin7 does NOT auto-populate OrderLines/PickLines from the BOM at
+  Create, matching what its own "New Assembly" screen shows: an
+  `OrderLines` table with a manual **"Load BOM"** button and "Click the
+  'Load BOM' button to view the bill of materials" until you do.
+  `authorise_assembly`/`complete_assembly` now build these lines
+  themselves from the product's own BOM (via a new
+  `_component_lines_for_build` helper), scaled to the assembly's build
+  quantity, instead of trusting Cin7 to have already populated them.
+  Cin7's own UI also shows a separate "Allocate" stage after Authorise
+  (with its own load-table step) -- not exercised here:
+  `complete_assembly` calls `POST /finishedGoods/pick` with
+  `Status: "COMPLETED"` directly from Authorised, which per Cin7's one
+  documented worked example does pick + allocate + complete together in
+  one call (see `allocate_assembly`'s docstring for why that stage is
+  deliberately unwired).
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
