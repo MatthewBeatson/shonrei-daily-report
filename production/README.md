@@ -720,18 +720,16 @@ Complete** (the run size) rather than `actual_qty` -- `actual_qty` is
 now purely the good-yield count recorded via `adjust_assembly_qty`, and
 never used for material consumption.
 
-`close_assembly` (cancel/void) is the one piece of the write side still
-completely unconfirmed live -- `scripts/void_test_assemblies.py` (below)
-is built to confirm it, using the real `close_assembly()` implementation
-rather than a separate DELETE call. This session's test assembly records
-ended up voided manually in Cin7's own UI instead of through this
-script, which doesn't test `close_assembly()` at all (that's a direct
-UI action, not a call through the API client) -- so this is still open,
-next time a test assembly exists to try it against.
+**`close_assembly` confirmed live (2026-09-11, WIP110)** via
+`scripts/void_test_assemblies.py` -- an Authorised test assembly
+(TaskID passed straight through as the `ID` query param, confirmed the
+same identifier) went AUTHORISED -> VOIDED on the first real call.
+Closes out the write side's cancel/void path entirely.
 
 **`adjust_stock_on_hand` live-tested (2026-09-11, WIP110), one fix
-needed:** a genuine no-op adjustment (targeting the SKU's own current
-on-hand, via `scripts/test_adjust_stock_on_hand.py`) 400'd --
+needed, request shape now confirmed correct:** a genuine no-op
+adjustment (targeting the SKU's own current on-hand, via
+`scripts/test_adjust_stock_on_hand.py`) first 400'd --
 `"'UnitCost' attribute is required."` -- not documented as mandatory at
 all. Also surfaced a real gap in `_post_json`/`_put_json`: they called
 `raise_for_status()` before ever inspecting the response body, so the
@@ -740,8 +738,14 @@ Cin7 actually said -- fixed with a new `_raise_for_status_with_body`
 helper (now used everywhere `raise_for_status()` was called directly,
 reads included), which is what surfaced the real message above. Fixed:
 `adjust_stock_on_hand` now sends `UnitCost` from the product's own real
-`AverageCost` field, not a guessed number. Re-test pending -- next run
-should confirm the full round trip actually succeeds.
+`AverageCost` field. Re-run after that fix got past every field
+validation cleanly and hit a different, business-logic 400 instead --
+`"Required stock matches available values, no need to create Stock
+Adjustment."` -- i.e. Cin7 won't let a no-op adjustment (target ==
+current) be created at all, which is specific to this test's
+deliberately-zero-delta design, not a code defect. A genuine (tiny,
+reversible) variance is the next test needed to see a real successful
+completion -- not yet run.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through

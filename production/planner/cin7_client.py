@@ -687,9 +687,8 @@ class Cin7Client:
         target wants).
 
         Cin7's docs name the query param "ID" while every response uses
-        "TaskID" -- assumed the same underlying identifier since both are
-        on the one finished-goods record, but not yet proven live (see
-        scripts/dump_sample_assembly_write.py).
+        "TaskID" -- confirmed live (2026-09-11, WIP110, TaskID passed
+        straight through as ID): AUTHORISED -> VOIDED, worked first try.
         """
         resp = requests.delete(
             f"{CIN7_BASE_URL}/finishedGoods",
