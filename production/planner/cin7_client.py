@@ -168,7 +168,7 @@ class Cin7Client:
         if include_bom:
             params["IncludeBOM"] = "true"
         resp = requests.get(f"{CIN7_BASE_URL}/product", headers=self._headers(), params=params, timeout=60)
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         products = resp.json().get("Products") or []
         if not products:
             raise ValueError(f"No Cin7 product found for SKU {sku!r}")
@@ -179,7 +179,7 @@ class Cin7Client:
             f"{CIN7_BASE_URL}/ref/productavailability",
             headers=self._headers(), params={"SKU": sku}, timeout=60,
         )
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         rows = resp.json().get("ProductAvailabilityList") or []
         if not rows:
             raise ValueError(f"No Cin7 availability row found for SKU {sku!r}")
@@ -285,7 +285,7 @@ class Cin7Client:
                     params={"Search": sku, "Page": page, "Limit": 100},
                     timeout=60,
                 )
-                resp.raise_for_status()
+                self._raise_for_status_with_body(resp)
                 rows = resp.json().get("FinishedGoods") or []
                 for row in rows:
                     if row.get("ProductCode") == sku and row.get("Status") not in ("COMPLETED", "VOIDED"):
@@ -309,23 +309,39 @@ class Cin7Client:
         if errors:
             raise RuntimeError(f"Cin7 rejected the request: {errors}")
 
+    @staticmethod
+    def _raise_for_status_with_body(resp) -> None:
+        # requests.HTTPError's default message is just "400 Client Error:
+        # Bad Request for url: ..." -- it never includes what Cin7 actually
+        # said was wrong, which is the one thing worth knowing. Confirmed
+        # the hard way (2026-09-11): a live 400 here gave zero diagnostic
+        # info until this was added.
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            try:
+                body = resp.json()
+            except ValueError:
+                body = resp.text[:1000]
+            raise requests.HTTPError(f"{exc} -- Cin7 response body: {body}", response=resp) from exc
+
     def _post_json(self, path: str, payload: dict) -> dict:
         resp = requests.post(f"{CIN7_BASE_URL}/{path}", headers=self._headers(), json=payload, timeout=60)
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         body = resp.json()
         self._raise_if_errors(body)
         return body
 
     def _put_json(self, path: str, payload: dict) -> dict:
         resp = requests.put(f"{CIN7_BASE_URL}/{path}", headers=self._headers(), json=payload, timeout=60)
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         body = resp.json()
         self._raise_if_errors(body)
         return body
 
     def _get_full_assembly(self, assembly_id: str) -> dict:
         resp = requests.get(f"{CIN7_BASE_URL}/finishedGoods", headers=self._headers(), params={"TaskID": assembly_id}, timeout=60)
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         return resp.json()
 
     def _component_lines_for_build(
@@ -681,7 +697,7 @@ class Cin7Client:
             params={"ID": assembly_id, "Void": "true"},
             timeout=60,
         )
-        resp.raise_for_status()
+        self._raise_for_status_with_body(resp)
         self._raise_if_errors(resp.json())
 
     def complete_small_assembly(

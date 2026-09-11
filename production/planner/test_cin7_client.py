@@ -6,6 +6,8 @@ account (see cin7_client.py's module docstring and production/README.md)
 import unittest
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from cin7_client import Assembly, Cin7Client
 
 # Trimmed to the fields these tests actually touch -- the real response
@@ -282,6 +284,35 @@ def _mock_write_response(json_body, status_code=200):
     resp.json.return_value = json_body
     resp.raise_for_status.return_value = None
     return resp
+
+
+class RaiseForStatusWithBodyTests(unittest.TestCase):
+    # Confirmed the hard way, 2026-09-11: requests.HTTPError's default
+    # message ("400 Client Error: Bad Request for url: ...") never
+    # includes what Cin7 actually said was wrong -- a live 400 on
+    # adjust_stock_on_hand gave zero diagnostic info until this was added.
+
+    def test_json_error_body_included_in_the_raised_message(self):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = requests.HTTPError("400 Client Error")
+        resp.json.return_value = [{"ErrorCode": 400, "Exception": "Something Cin7 actually said"}]
+        with self.assertRaises(requests.HTTPError) as ctx:
+            Cin7Client._raise_for_status_with_body(resp)
+        self.assertIn("Something Cin7 actually said", str(ctx.exception))
+
+    def test_non_json_error_body_included_in_the_raised_message(self):
+        resp = MagicMock()
+        resp.raise_for_status.side_effect = requests.HTTPError("500 Server Error")
+        resp.json.side_effect = ValueError("not json")
+        resp.text = "<html>Internal Server Error</html>"
+        with self.assertRaises(requests.HTTPError) as ctx:
+            Cin7Client._raise_for_status_with_body(resp)
+        self.assertIn("Internal Server Error", str(ctx.exception))
+
+    def test_no_error_does_not_raise(self):
+        resp = MagicMock()
+        resp.raise_for_status.return_value = None
+        Cin7Client._raise_for_status_with_body(resp)  # should not raise
 
 
 class CreateAssemblyTests(unittest.TestCase):
