@@ -723,8 +723,12 @@ never used for material consumption.
 `close_assembly` (cancel/void) is the one piece of the write side still
 completely unconfirmed live -- `scripts/void_test_assemblies.py` (below)
 is built to confirm it, using the real `close_assembly()` implementation
-rather than a separate DELETE call. `adjust_stock_on_hand` (stock
-adjustment) hasn't been live-tested at all yet either.
+rather than a separate DELETE call. This session's test assembly records
+ended up voided manually in Cin7's own UI instead of through this
+script, which doesn't test `close_assembly()` at all (that's a direct
+UI action, not a call through the API client) -- so this is still open,
+next time a test assembly exists to try it against. `adjust_stock_on_hand`
+(stock adjustment) hasn't been live-tested at all yet either.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
