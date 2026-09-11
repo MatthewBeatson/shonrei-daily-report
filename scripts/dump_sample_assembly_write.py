@@ -143,7 +143,7 @@ def get_json(headers, path, params, label=None):
     if label:
         dump[label] = {'status': resp.status_code, 'body': body if body is not None else resp.text[:1000]}
     print(f"GET {path} {params} -> {resp.status_code}")
-    return body or {}
+    return body if isinstance(body, dict) else {}
 
 
 def post_json(headers, path, payload, label=None):
@@ -152,9 +152,14 @@ def post_json(headers, path, payload, label=None):
     if label:
         dump[label] = {'status': resp.status_code, 'request': payload, 'body': body if body is not None else resp.text[:1000]}
     print(f"POST {path} -> {resp.status_code}")
-    if body and body.get('Errors'):
+    # Cin7's error body isn't always the documented {"Errors": [...]} shape --
+    # sometimes it's a bare JSON array of error strings. Print whatever came
+    # back on any non-2xx status rather than assume a dict.
+    if resp.status_code >= 400:
+        print(f"  Cin7 returned an error body: {body if body is not None else resp.text[:1000]}")
+    elif isinstance(body, dict) and body.get('Errors'):
         print(f"  Cin7 returned Errors: {body['Errors']}")
-    return body or {}
+    return body if isinstance(body, dict) else {}
 
 
 def safe_json(resp):
