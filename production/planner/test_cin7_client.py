@@ -258,9 +258,13 @@ EXPECTED_ORDER_LINES = [
     {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": ""},
     {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 1.5, "TotalQuantity": 7.5, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": "222/00A"},
 ]
+# PickLines excludes the labour line -- a live test against WIP110
+# (2026-09-11) got a 404 ("... or SKU '' not found.") when a labour
+# line's ProductID was included here; Pick is a physical stock movement
+# and only wants real stock items, unlike Order (which authorises the
+# whole costed BOM including labour) -- see complete_assembly's docstring.
 EXPECTED_PICK_LINES = [
     {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 10.0, "Unit": ""},
-    {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 7.5, "Unit": ""},
 ]
 
 AUTHORISE_RESPONSE = {"TaskID": "task-1", "Status": "AUTHORISED", "OrderLines": EXPECTED_ORDER_LINES}

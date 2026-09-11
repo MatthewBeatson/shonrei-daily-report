@@ -147,10 +147,16 @@ def main():
 
     # -- 4. Complete (no separate Allocate call -- see cin7_client.py's --
     #    allocate_assembly docstring for why that stage is skipped here)
+    # PickLines only wants physical components, not labour/service lines --
+    # confirmed live against WIP110 (2026-09-11): a labour line's
+    # ComponentProductID in PickLines got a 404 ("... or SKU '' not
+    # found."), while Authorise's OrderLines accepted the same ID fine.
+    # Service lines are the ones build_component_lines gives ProductCode="".
     pick_lines = [
         {'ProductID': line['ProductID'], 'ProductCode': line['ProductCode'], 'Name': line['Name'],
          'Quantity': line['TotalQuantity'], 'Unit': ''}
         for line in component_lines
+        if line['ProductCode']
     ]
     if not confirm(f"About to COMPLETE TaskID={task_id} with {len(pick_lines)} pick line(s) -- "
                     "this is the step that actually consumes component stock and creates finished-good stock."):

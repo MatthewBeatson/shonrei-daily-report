@@ -467,6 +467,17 @@ class Cin7Client:
         CompletionDate/WIPDate, per Cin7's one worked pick/complete
         example in its docs; CompletionDate/WIPDate default to right now.
 
+        PickLines only carries physical component lines, NOT labour/
+        service lines -- a live test against WIP110 (2026-09-11)
+        included a labour line's ComponentProductID in PickLines and got
+        a 404 back ("Product with ProductID '...' or SKU '' not found."),
+        while that same ID was accepted fine in Authorise's OrderLines.
+        Pick is a physical stock movement (it's what actually consumes
+        component inventory), so it only wants real stock items --
+        unlike Order, which is authorising the whole BOM including
+        costed labour. Service lines are the ones _component_lines_for_build
+        gives an empty ProductCode ("") to, so that's the filter here.
+
         `actual_qty` must match the assembly's own Quantity (set at
         Create) -- the documented pick/complete request has no field for
         changing the finished-good quantity at this stage, only the
@@ -494,6 +505,7 @@ class Cin7Client:
                 "Unit": "",
             }
             for line in component_lines
+            if line["ProductCode"]  # excludes labour/service lines -- see docstring
         ]
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         body = self._post_json("finishedGoods/pick", {

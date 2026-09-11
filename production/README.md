@@ -596,7 +596,17 @@ One gap found on that first successful run: it only included
 `BillOfMaterialsServices` (labour lines, e.g. "LABOUR - Gluing Room" seen
 earlier on WIPMT20T) -- Cin7 didn't require them to complete, but
 omitting them means labour cost never gets allocated to the assembly.
-`_component_lines_for_build` now includes both.
+`_component_lines_for_build` now includes both -- but a second live test
+adding them found `OrderLines` (Authorise) and `PickLines` (Complete)
+want different things: including a labour line's `ProductID` in
+`PickLines` got a 404 (`"Product with ProductID '...' or SKU '' not
+found."`) while the exact same ID was accepted fine in `OrderLines`.
+Makes sense once you see it -- Pick is a physical stock movement (it's
+what actually consumes component inventory), so it only wants real stock
+items, while Order authorises the whole costed BOM including labour.
+`complete_assembly` now filters `PickLines` down to physical components
+only (labour lines are the ones `_component_lines_for_build` gives an
+empty `ProductCode`, which is what the filter checks).
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
