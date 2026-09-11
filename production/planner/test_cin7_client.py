@@ -383,33 +383,46 @@ class CompleteAssemblyTests(unittest.TestCase):
     @patch('cin7_client.requests.post')
     @patch('cin7_client.requests.put')
     @patch('cin7_client.requests.get')
-    def test_qty_mismatch_adjusts_the_assembly_then_completes_at_the_new_qty(self, mock_get, mock_put, mock_post):
-        # Cin7's own UI confirms this live (2026-09-11, FG-6236): editing
-        # an Authorised assembly's "Actual yield" (= Quantity) before
-        # Complete works fine -- a mismatch should adjust in place via
-        # adjust_assembly_qty, not raise. FULL_ASSEMBLY_AUTHORISED is
-        # Quantity 5.0; completing at 10.0 should trigger the adjust.
-        full_assembly_at_10 = dict(FULL_ASSEMBLY_AUTHORISED, Quantity=10.0)
+    def test_yield_below_run_size_adjusts_qty_but_picks_the_full_run_size(self, mock_get, mock_put, mock_post):
+        # Confirmed live, 2026-09-11 (WIP110, run size 10 -> actual yield
+        # 5): a real production run can consume material for the FULL
+        # run size and still only yield fewer good units (scrap) --
+        # PickLines must reflect the run size (the assembly's own
+        # Quantity going into Complete), NOT actual_qty, or material
+        # consumption gets silently under-counted. Labour cost is
+        # unaffected either way since OrderLines is fixed at Authorise
+        # and never touched again.
+        #
+        # FULL_ASSEMBLY_AUTHORISED's Quantity is 5.0 (the run size here);
+        # completing at actual_qty=3.0 (fewer good units than fed in)
+        # should adjust the assembly's own Quantity to 3.0, but still
+        # pick EXPECTED_PICK_LINES -- which is built at qty 5.0, the run
+        # size, not 3.0.
+        full_assembly_at_3 = dict(FULL_ASSEMBLY_AUTHORISED, Quantity=3.0)
         mock_get.side_effect = [
-            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),  # complete_assembly's own qty check (5.0)
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),  # complete_assembly's own run-size fetch (5.0)
             _mock_write_response(FULL_ASSEMBLY_AUTHORISED),  # adjust_assembly_qty's own-record fetch
-            _mock_write_response(full_assembly_at_10),       # adjust_assembly_qty's post-PUT refetch
+            _mock_write_response(full_assembly_at_3),        # adjust_assembly_qty's post-PUT refetch
             _mock_write_response(PRODUCT_WITH_BOM),          # complete_assembly's BOM fetch
             _mock_write_response(FULL_ASSEMBLY_COMPLETED),   # complete_assembly's post-complete refetch
         ]
-        mock_put.return_value = _mock_write_response({"TaskID": "task-1", "Quantity": 10.0})
+        mock_put.return_value = _mock_write_response({"TaskID": "task-1", "Quantity": 3.0})
         mock_post.return_value = _mock_write_response(COMPLETE_RESPONSE)
 
-        assembly = self.client.complete_assembly('task-1', 10.0)
+        assembly = self.client.complete_assembly('task-1', 3.0)
 
         put_args, put_kwargs = mock_put.call_args
         self.assertIn('/finishedGoods', put_args[0])
-        self.assertEqual(put_kwargs['json']['Quantity'], 10.0)
+        self.assertEqual(put_kwargs['json']['Quantity'], 3.0)  # records the reduced yield
         # Confirmed live, 2026-09-11: this PUT 400's without CompletionDate/
         # WIPDate too ("Required attribute 'WIPDate'/'CompletionDate' not
         # provided.") -- not in Cin7's documented PUT model at all.
         self.assertIn('CompletionDate', put_kwargs['json'])
         self.assertIn('WIPDate', put_kwargs['json'])
+
+        post_args, post_kwargs = mock_post.call_args
+        self.assertIn('/finishedGoods/pick', post_args[0])
+        self.assertEqual(post_kwargs['json']['PickLines'], EXPECTED_PICK_LINES)  # run size (5.0), not actual_qty (3.0)
         self.assertEqual(assembly.status, 'COMPLETED')
 
 

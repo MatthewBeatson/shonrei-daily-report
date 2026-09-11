@@ -494,31 +494,36 @@ class Cin7Client:
         costed labour. Service lines are the ones _component_lines_for_build
         gives an empty ProductCode ("") to, so that's the filter here.
 
-        `actual_qty` doesn't need to match the assembly's own Quantity
-        (set at Create/Authorise) -- if a floor-reported actual differs
-        from what was planned, this calls adjust_assembly_qty first to
-        update it in place (Cin7's own "Assembly order" screen calls this
-        same field "Actual yield" once an assembly is past Draft, and
-        editing it before Complete works -- confirmed at the UI level,
-        2026-09-11, see adjust_assembly_qty's docstring). PickLines are
-        then built (and, on Complete, the finished-good quantity itself)
-        at `actual_qty`, not whatever the assembly was originally for.
+        `actual_qty` is the count of GOOD finished units produced --
+        Cin7's own "Assembly order" screen calls this "Actual yield"
+        once an assembly is past Draft. It does NOT have to match the
+        assembly's own Quantity (set at Create/Authorise, i.e. the RUN
+        SIZE -- how much material/labour was actually fed into the
+        process): a real production run can consume material for the
+        full run size and still only yield fewer good units, the rest
+        being scrap. So PickLines (physical component consumption) is
+        built from the assembly's own current Quantity (the run size),
+        NOT `actual_qty` -- confirmed live (2026-09-11, WIP110, planned
+        10 -> actual yield 5): completing at a smaller actual_qty
+        without this distinction wrongly reduced material consumption
+        to match the smaller yield (5-units-worth of steel picked)
+        instead of the full run size (10) that was genuinely fed in;
+        labour cost correctly stayed at the full run size the whole
+        time, since it's fixed at Authorise and never touched again
+        (OrderLines can't be resubmitted once Authorised -- see
+        allocate_assembly's docstring history in production/README.md).
 
-        A live test of this exact mismatch path (2026-09-11, WIP110,
-        planned 10 -> actual 5) hit adjust_assembly_qty's missing-
-        CompletionDate/WIPDate 400 before it could complete -- so real
-        stock ended up consumed at the ORIGINAL planned qty (10), not
-        the smaller actual (5), and the completed record's Quantity
-        stayed 10. That's now fixed in adjust_assembly_qty, but this
-        mismatch path (complete_assembly with actual_qty != the
-        assembly's current Quantity) is not yet re-confirmed working
-        end-to-end -- worth another live test before trusting it fully.
+        If `actual_qty` differs from the run size, this calls
+        adjust_assembly_qty to record the reduced yield on the assembly
+        itself (confirmed working at the UI level, 2026-09-11) -- but
+        the run size used for PickLines is captured BEFORE that call,
+        from the assembly's Quantity as it stood going into Complete.
         """
         full = self._get_full_assembly(assembly_id)
-        existing_qty = full.get("Quantity")
-        if existing_qty is not None and float(existing_qty) != float(actual_qty):
+        run_size = full.get("Quantity")
+        if run_size is not None and float(run_size) != float(actual_qty):
             self.adjust_assembly_qty(assembly_id, actual_qty)
-        component_lines = self._component_lines_for_build(full.get("ProductCode"), actual_qty)
+        component_lines = self._component_lines_for_build(full.get("ProductCode"), run_size if run_size is not None else actual_qty)
         pick_lines = [
             {
                 "ProductID": line["ProductID"],

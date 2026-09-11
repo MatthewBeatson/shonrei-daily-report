@@ -653,9 +653,28 @@ qty differs from what was authorised, instead of hard-blocking.
   a specific line once an assembly is authorised -- only the assembly's
   overall Quantity (actual yield) stays adjustable post-Authorise, via
   `adjust_assembly_qty`. This closes off the "actual labour hours"
-  floor-app idea from earlier as not achievable this way; a labour
-  line's cost will always reflect the standard BOM rate, scaled to
-  whatever the final adjusted Quantity ends up being.
+  floor-app idea from earlier as not achievable this way -- a labour
+  line's cost is fixed at whatever Authorise's `OrderLines` said (the
+  full run size, see below), full stop, since `OrderLines` can never be
+  touched again.
+
+**Re-testing the fix surfaced a real domain distinction, not a bug
+(2026-09-11, WIP110, planned/run size 10 -> actual yield 5):** with
+`CompletionDate`/`WIPDate` added, `adjust_assembly_qty` worked and
+`complete_assembly` completed cleanly -- but `PickLines` picked only
+5-units-worth of steel coil, matching `actual_qty` (5) instead of the
+run size (10). That's wrong for real production: a run can consume
+material for the FULL run size and still only yield fewer good units
+(scrap) -- the material fed in doesn't shrink just because fewer good
+units came out. Labour cost correctly stayed at the full run size the
+whole time (confirmed "good" against this same run), precisely because
+`OrderLines` is fixed at Authorise and can never be resubmitted (see
+above) -- an accidentally-correct outcome, not something the code
+enforced on purpose until this fix. `complete_assembly` now builds
+`PickLines` from the assembly's own Quantity **as it stands going into
+Complete** (the run size) rather than `actual_qty` -- `actual_qty` is
+now purely the good-yield count recorded via `adjust_assembly_qty`, and
+never used for material consumption.
 
 `close_assembly` (cancel/void) is the one piece of the write side still
 completely unconfirmed live -- `scripts/void_test_assemblies.py` (below)
