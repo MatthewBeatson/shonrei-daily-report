@@ -100,9 +100,18 @@ being corrected as real 400s come back:
     cost never gets allocated to the assembly -- _component_lines_for_build
     now includes both.
 
+Confirmed at the UI level (2026-09-11, FG-6236): Cin7's own "Assembly
+order" screen has an "Actual yield" field (Quantity's label once an
+assembly is past Draft) that's editable before Complete, and completing
+after editing it (100 -> 95) worked. complete_assembly now calls
+adjust_assembly_qty (the PUT that edits Quantity) when actual_qty
+differs from the assembly's own Quantity, instead of raising -- though
+adjust_assembly_qty's own PUT call is only inferred to work this way,
+not yet independently confirmed as a raw API call (the UI likely makes
+the same call, but that's not proven).
+
 Still open: whether "ID" and "TaskID" really are the same identifier for
-DELETE (close_assembly/cancel), and whether PUT /finishedGoods can edit
-Quantity on an Authorised assembly (adjust_assembly_qty).
+DELETE (close_assembly/cancel).
 """
 from __future__ import annotations
 import os
@@ -485,23 +494,20 @@ class Cin7Client:
         costed labour. Service lines are the ones _component_lines_for_build
         gives an empty ProductCode ("") to, so that's the filter here.
 
-        `actual_qty` must match the assembly's own Quantity (set at
-        Create) -- the documented pick/complete request has no field for
-        changing the finished-good quantity at this stage, only the
-        Quantity already on the assembly record. If a floor-reported
-        actual differs from what was created/authorised, this raises
-        rather than silently completing the wrong quantity; whether PUT
-        /finishedGoods can change Quantity on an Authorised (not just
-        Draft) assembly first is unconfirmed -- see adjust_assembly_qty.
+        `actual_qty` doesn't need to match the assembly's own Quantity
+        (set at Create/Authorise) -- if a floor-reported actual differs
+        from what was planned, this calls adjust_assembly_qty first to
+        update it in place (Cin7's own "Assembly order" screen calls this
+        same field "Actual yield" once an assembly is past Draft, and
+        editing it before Complete works -- confirmed live 2026-09-11,
+        see adjust_assembly_qty's docstring). PickLines are then built
+        (and, on Complete, the finished-good quantity itself) at
+        `actual_qty`, not whatever the assembly was originally for.
         """
         full = self._get_full_assembly(assembly_id)
         existing_qty = full.get("Quantity")
         if existing_qty is not None and float(existing_qty) != float(actual_qty):
-            raise NotImplementedError(
-                f"complete_assembly({assembly_id!r}, {actual_qty}): assembly's own Quantity "
-                f"is {existing_qty}, not {actual_qty} -- Cin7's documented pick/complete request "
-                "has no field to change it at this stage, see this method's docstring"
-            )
+            self.adjust_assembly_qty(assembly_id, actual_qty)
         component_lines = self._component_lines_for_build(full.get("ProductCode"), actual_qty)
         pick_lines = [
             {
@@ -543,13 +549,19 @@ class Cin7Client:
     def adjust_assembly_qty(self, assembly_id: str, new_qty: float) -> Assembly:
         """Change an existing Authorised (not yet Allocated) assembly's
         quantity in place, to match a target's newly-recalculated
-        outstanding demand, via PUT /finishedGoods. NOT YET CONFIRMED
-        whether Cin7 accepts an in-place Quantity edit once an assembly
-        is past Draft -- a target's assembly sits in Authorised, and the
-        documented PUT model doesn't call out a status restriction, but
-        that's silence in the docs, not a live confirmation (see
-        scripts/dump_sample_assembly_write.py). If this errors live, the
-        proven fallback is close_assembly() + create_authorised_assembly()
+        outstanding demand, via PUT /finishedGoods.
+
+        Confirmed live at the UI level (2026-09-11, FG-6236): Cin7's own
+        "Assembly order" screen has this exact field -- labelled "Actual
+        yield" once an assembly is Authorised/"Work in progress" rather
+        than "Quantity" (its Draft-stage label) -- and editing it (100 ->
+        95) before hitting Complete worked, completing the assembly at
+        95. The documented PUT /finishedGoods model lists Quantity as an
+        editable field with no status restriction called out, which
+        matches. NOT YET independently confirmed as a raw API call this
+        method makes itself, though -- only inferred from the UI doing
+        the equivalent. If this errors when called directly, the proven
+        fallback is close_assembly() + create_authorised_assembly()
         (backorder_targets.sync_targets already has both available)."""
         full = self._get_full_assembly(assembly_id)
         body = self._put_json("finishedGoods", {

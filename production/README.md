@@ -622,10 +622,25 @@ calculation is what actually matters financially. Not chased further.
 
 **This closes out the assembly write-side confirmation loop**: a full
 Create -> Authorise -> Complete run now works live, with both physical
-components and correctly-costed labour lines. `close_assembly` (cancel/
-void) and `adjust_assembly_qty` (in-place quantity edit) are still
-unconfirmed live -- see "Still open" above -- and `adjust_stock_on_hand`
-(stock adjustment) hasn't been live-tested at all yet.
+components and correctly-costed labour lines.
+
+**Actual yield (completing at a different qty than planned), confirmed
+live at the UI level (2026-09-11, FG-6236):** Cin7's own "Assembly
+order" screen has an "Actual yield" field -- Quantity's label once an
+assembly is past Draft -- and editing it before Complete works (tested
+100 -> 95, completed fine). `complete_assembly` now calls
+`adjust_assembly_qty` (the `PUT` that edits Quantity) when the actual
+qty differs from what was authorised, instead of hard-blocking.
+`adjust_assembly_qty`'s own `PUT` call itself is only inferred to work
+this way (the UI likely makes the same call, not proven) -- a good next
+live test would be calling it directly via the API on one of the
+remaining test assemblies before voiding it.
+
+`close_assembly` (cancel/void) is the one piece of the write side still
+completely unconfirmed live -- `scripts/void_test_assemblies.py` (below)
+is built to confirm it, using the real `close_assembly()` implementation
+rather than a separate DELETE call. `adjust_stock_on_hand` (stock
+adjustment) hasn't been live-tested at all yet either.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
@@ -637,13 +652,27 @@ remaining step is re-running it with the labour-line fix included, then
 swapping `DryRunCin7Client` for a real `Cin7Client` in the
 backorder-target/batch flow -- see "What's dry-run vs. real today" above.
 
-**Possible follow-up (not yet scoped):** a quick-add field on batch
-completion (floor app) for actual labour hours, since Cin7's BOM-derived
-labour quantity is only the standard/planned figure, not what actually
-happened on the floor. Actuals in Shonrei's real process are always
-entered after allocation, which lines up with where `apply_batch_actual`
-(`backorder_targets.py`) already sits -- the natural place to add an
-optional labour override before it reaches `complete_small_assembly`.
+**Possible follow-up (not yet scoped) -- three related batch-completion
+UI pieces, all confirmed to have a real underlying Cin7 mechanism now:**
+1. **Actual yield override** -- `complete_assembly` already supports
+   this (see above); the floor-app piece is just a quick-add "actual
+   yield" field on batch completion, defaulting to the batch's planned
+   run size.
+2. **Pick-line override** -- letting a batch's `PickLines` (the physical
+   components actually consumed) be adjusted for the rare substitution
+   case, rather than always exactly matching the BOM.
+3. **Actual labour hours per service line** -- Cin7's BOM-derived labour
+   quantity is only the standard/planned figure. If someone enters real
+   hours for a labour line, the same per-unit/total-quantity shape
+   already used (`Quantity` = per-unit rate, `TotalQuantity` = total for
+   the run) works out to `TotalQuantity` = entered hours straight
+   through, `Quantity` = entered hours / actual yield -- falling back to
+   the BOM's standard rate x actual yield when nothing's entered.
+
+Actuals in Shonrei's real process are always entered after allocation,
+which lines up with where `apply_batch_actual` (`backorder_targets.py`)
+already sits -- the natural place to add all three as optional overrides
+before it reaches `complete_small_assembly`.
 
 ## Still not built
 

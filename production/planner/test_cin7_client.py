@@ -380,14 +380,32 @@ class CompleteAssemblyTests(unittest.TestCase):
         })
         self.assertEqual(assembly.status, 'COMPLETED')
 
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.put')
     @patch('cin7_client.requests.get')
-    def test_qty_mismatch_against_the_assemblys_own_quantity_raises(self, mock_get):
-        # Cin7's documented pick/complete request has no field to change
-        # the finished-good quantity at this stage -- a mismatch must
-        # never be silently completed against the wrong quantity.
-        mock_get.return_value = _mock_write_response(FULL_ASSEMBLY_AUTHORISED)  # Quantity: 5.0
-        with self.assertRaises(NotImplementedError):
-            self.client.complete_assembly('task-1', 999.0)
+    def test_qty_mismatch_adjusts_the_assembly_then_completes_at_the_new_qty(self, mock_get, mock_put, mock_post):
+        # Cin7's own UI confirms this live (2026-09-11, FG-6236): editing
+        # an Authorised assembly's "Actual yield" (= Quantity) before
+        # Complete works fine -- a mismatch should adjust in place via
+        # adjust_assembly_qty, not raise. FULL_ASSEMBLY_AUTHORISED is
+        # Quantity 5.0; completing at 10.0 should trigger the adjust.
+        full_assembly_at_10 = dict(FULL_ASSEMBLY_AUTHORISED, Quantity=10.0)
+        mock_get.side_effect = [
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),  # complete_assembly's own qty check (5.0)
+            _mock_write_response(FULL_ASSEMBLY_AUTHORISED),  # adjust_assembly_qty's own-record fetch
+            _mock_write_response(full_assembly_at_10),       # adjust_assembly_qty's post-PUT refetch
+            _mock_write_response(PRODUCT_WITH_BOM),          # complete_assembly's BOM fetch
+            _mock_write_response(FULL_ASSEMBLY_COMPLETED),   # complete_assembly's post-complete refetch
+        ]
+        mock_put.return_value = _mock_write_response({"TaskID": "task-1", "Quantity": 10.0})
+        mock_post.return_value = _mock_write_response(COMPLETE_RESPONSE)
+
+        assembly = self.client.complete_assembly('task-1', 10.0)
+
+        put_args, put_kwargs = mock_put.call_args
+        self.assertIn('/finishedGoods', put_args[0])
+        self.assertEqual(put_kwargs['json']['Quantity'], 10.0)
+        self.assertEqual(assembly.status, 'COMPLETED')
 
 
 class CloseAssemblyTests(unittest.TestCase):
