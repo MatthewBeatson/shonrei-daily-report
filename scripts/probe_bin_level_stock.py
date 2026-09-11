@@ -62,10 +62,13 @@ def try_get(client: Cin7Client, label: str, path: str, params: dict) -> None:
 
 
 def main():
-    if len(sys.argv) != 3:
-        print('Usage: python scripts/probe_bin_level_stock.py <SKU> "<BIN NAME>"')
+    if len(sys.argv) not in (3, 4):
+        print('Usage: python scripts/probe_bin_level_stock.py <SKU> "<BIN NAME>" [existing-draft-TaskID]')
+        print('Pass a TaskID as the 3rd arg to COMPLETE an already-open draft (e.g. one left open by '
+              'a previous run that failed at the completion step) instead of creating a new one.')
         sys.exit(1)
     sku, bin_name = sys.argv[1], sys.argv[2]
+    existing_task_id = sys.argv[3] if len(sys.argv) == 4 else None
 
     account_id = keyring.get_password(SERVICE, 'cin7_account_id')
     api_key = keyring.get_password(SERVICE, 'cin7_api_key')
@@ -78,13 +81,37 @@ def main():
 
     print(f'Current on-hand (Location-level, from get_stock_on_hand): {client.get_stock_on_hand(sku)}')
 
-    answer = input(
-        f"\nAbout to push a REAL +1 unit stock adjustment for {sku!r} tagged Bin={bin_name!r}, "
-        "so there's a genuine bin-assigned figure to test reads against (Cin7's own Stock Level "
-        "Report currently shows this SKU's stock all sitting in the unassigned/blank bin). "
-        "This is a real, reversible inventory change (you can adjust it back after). "
-        "Type 'yes' to push it, anything else to skip straight to the read probes: "
-    )
+    if existing_task_id:
+        print(f'\nCompleting existing draft TaskID={existing_task_id} (not creating a new one)...')
+        resp = requests.get(f'{CIN7_BASE_URL}/stockadjustment', headers=client._headers(),  # noqa: SLF001
+                             params={'TaskID': existing_task_id}, timeout=60)
+        client._raise_for_status_with_body(resp)  # noqa: SLF001
+        draft = resp.json()
+        print(f'Fetched draft: {json.dumps(draft, indent=2, default=str)}')
+        complete_payload = {
+            "TaskID": existing_task_id,
+            "EffectiveDate": draft.get("EffectiveDate"),
+            "Lines": draft.get("Lines"),
+            "Reference": draft.get("Reference") or "",
+            "Status": "COMPLETED",
+        }
+        resp = requests.put(f'{CIN7_BASE_URL}/stockadjustment', headers=client._headers(), json=complete_payload, timeout=60)
+        try:
+            client._raise_for_status_with_body(resp)  # noqa: SLF001
+        except Exception as exc:  # noqa: BLE001
+            print(f'PUT (complete) FAILED: {exc}')
+            sys.exit(1)
+        print(f'Adjustment COMPLETED, TaskID={existing_task_id}. Check Cin7\'s Stock Level Report UI now -- '
+              f'{bin_name!r} should show a real quantity for {sku!r}.')
+        answer = 'no'  # already completed -- skip the create-new-draft branch below
+    else:
+        answer = input(
+            f"\nAbout to push a REAL +1 unit stock adjustment for {sku!r} tagged Bin={bin_name!r}, "
+            "so there's a genuine bin-assigned figure to test reads against (Cin7's own Stock Level "
+            "Report currently shows this SKU's stock all sitting in the unassigned/blank bin). "
+            "This is a real, reversible inventory change (you can adjust it back after). "
+            "Type 'yes' to push it, anything else to skip straight to the read probes: "
+        )
     if answer.strip().lower() == 'yes':
         current = client.get_stock_on_hand(sku)
         # adjust_stock_on_hand doesn't take a Bin param yet -- this is exactly
@@ -139,7 +166,19 @@ def main():
         draft = resp.json()
         task_id = draft['TaskID']
         print(f'DRAFT created, TaskID={task_id}')
-        complete_payload = {"TaskID": task_id, "Status": "COMPLETED"}
+        # Must resend EffectiveDate and Lines on the completing PUT --
+        # confirmed by this exact bug on the first live run of this
+        # script: a bare {TaskID, Status} body got back "Required
+        # attribute 'EffectiveDate' not provided" / "'Lines' not
+        # provided", even though the draft already has both. Mirrors
+        # the real adjust_stock_on_hand's complete_payload shape.
+        complete_payload = {
+            "TaskID": task_id,
+            "EffectiveDate": draft.get("EffectiveDate") or now,
+            "Lines": draft.get("Lines") or [line],
+            "Reference": draft.get("Reference") or "",
+            "Status": "COMPLETED",
+        }
         resp = requests.put(f'{CIN7_BASE_URL}/stockadjustment', headers=client._headers(), json=complete_payload, timeout=60)
         try:
             client._raise_for_status_with_body(resp)  # noqa: SLF001
