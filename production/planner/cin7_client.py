@@ -318,6 +318,13 @@ class Cin7Client:
         `location` defaults to the product's own DefaultLocation
         (single-Cin7-location tenant so far) -- pass it explicitly if
         Shonrei ever runs more than one Cin7 warehouse location.
+
+        Status="DRAFT" is required -- Cin7's own docs example showed
+        "Status": "..." (left blank), but a live 400 confirmed it's
+        mandatory ("Required attribute 'Status' not provided.",
+        2026-09-11). DRAFT is the natural value for a brand new
+        assembly -- not yet proven past this point live (see
+        production/README.md for what's still open).
         """
         product = self._get_product(sku)
         body = self._post_json("finishedGoods", {
@@ -325,6 +332,7 @@ class Cin7Client:
             "ProductCode": sku,
             "Quantity": qty,
             "Location": location or product.get("DefaultLocation"),
+            "Status": "DRAFT",
         })
         return self._assembly_from(body)
 

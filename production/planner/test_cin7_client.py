@@ -273,7 +273,7 @@ class CreateAssemblyTests(unittest.TestCase):
         self.assertIn('/finishedGoods', args[0])
         self.assertEqual(kwargs['json'], {
             'ProductID': 'product-guid-1', 'ProductCode': 'FG-ASSEMBLED',
-            'Quantity': 5.0, 'Location': 'Main Warehouse',
+            'Quantity': 5.0, 'Location': 'Main Warehouse', 'Status': 'DRAFT',
         })
         self.assertEqual(assembly, Assembly(assembly_id='task-1', sku='FG-ASSEMBLED', status='DRAFT', qty=5.0))
 

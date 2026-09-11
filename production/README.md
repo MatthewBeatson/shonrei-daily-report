@@ -531,7 +531,7 @@ This closes out the Cin7-read side entirely: `get_bom`, `get_availability`,
 and `get_stock_on_hand` are all wired against confirmed live field names,
 no more open questions on any of the three.
 
-## Confirmed Cin7 writes (documented, not yet live-tested)
+## Confirmed Cin7 writes (documented, live-testing in progress)
 
 `cin7_client.py`'s Create/Authorise/Complete/Cancel assembly calls,
 `get_open_assemblies`, and `adjust_stock_on_hand` are wired from Cin7's
@@ -549,18 +549,24 @@ alone:
   goes straight from Authorised to Completed) -- only blocks
   `orchestrator.py`'s general path, which has no floor screen yet anyway.
 - Whether **Account/WIPAccount** fields are actually required on
-  Create/Authorise/Complete/stock-adjustment (Cin7's worked examples use
+  Authorise/Complete/stock-adjustment (Cin7's worked examples use
   tenant-specific-looking codes like `"714"`/`"715"` -- omitted here
   rather than guessed) and whether **`ID` and `TaskID`** are really the
   same identifier for the cancel endpoint's `DELETE ?ID=...`.
 
+**Live findings so far (2026-09-11, against MTS57013WH):**
+- Create's documented request example showed `"Status": "..."`
+  (literally left blank) -- a live 400 confirmed it's a required field
+  ("Required attribute 'Status' not provided."). `create_assembly` now
+  sends `Status: "DRAFT"`, the natural value for a brand new assembly.
+
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
 Create -> Authorise -> Complete (with a confirmation prompt before each
-write), tests the Void/cancel path on a separate never-authorised draft,
-and runs a genuinely no-op stock adjustment (targets the SKU's current
-on-hand, so the resulting transaction should be zero). Run it once
-against a live tenant, and this list -- along with `DryRunCin7Client`
+write); stock adjustment and the Void/cancel test are deliberately not
+in it this round (voiding is being done manually in Cin7's UI instead).
+Once a full Create -> Authorise -> Complete run succeeds live, this list
+-- along with `DryRunCin7Client`
 still being what actually runs today -- gets the same "confirmed live"
 treatment the read side got above.
 

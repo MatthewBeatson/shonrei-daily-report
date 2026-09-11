@@ -88,11 +88,15 @@ def main():
         save_and_exit()
 
     # -- 2. Create -------------------------------------------------------
+    # Status is required -- Cin7's docs example showed "Status": "..."
+    # (left blank) but a live 400 confirmed it's mandatory; "DRAFT" is the
+    # natural value for a brand new assembly (see cin7_client.py).
     created = post_json(headers, 'finishedGoods', {
         'ProductID': p['ID'],
         'ProductCode': assembly_sku,
         'Quantity': qty,
         'Location': p.get('DefaultLocation'),
+        'Status': 'DRAFT',
     }, label='create_assembly')
     task_id = created.get('TaskID')
     if not task_id:
