@@ -53,6 +53,36 @@ def test_group_orders_merges_same_customer_and_date():
     assert set(acme_may1.order_numbers) == {'SO-1', 'SO-2'}
 
 
+def test_multi_order_auto_group_gets_a_summary_label_not_the_first_orders_reference():
+    # A group combining 3 orders shouldn't show one of their references as
+    # if it were the whole line's identity -- Matthew's call 2026-09-11.
+    orders = [
+        make_order('SO-1', 'Prouds', date(2026, 8, 12), 1000, reference='PR#449(12.08)Daniel N'),
+        make_order('SO-2', 'Prouds', date(2026, 8, 12), 500, reference='something else entirely'),
+        make_order('SO-3', 'Prouds', date(2026, 8, 12), 200, reference='a third reference'),
+    ]
+    groups = group_orders(orders, overrides={})
+    assert len(groups) == 1
+    assert groups[0].label == 'Multiple Prouds orders - 12th Aug'
+
+
+def test_single_order_auto_group_keeps_its_own_reference():
+    orders = [make_order('SO-1', 'Prouds', date(2026, 8, 12), 1000, reference='PR#449(12.08)Daniel N')]
+    groups = group_orders(orders, overrides={})
+    assert groups[0].label == 'PR#449(12.08)Daniel N'
+
+
+def test_override_labeled_group_is_not_overwritten_by_the_summary_label():
+    orders = [
+        make_order('SO-1', 'Acme', date(2026, 5, 1), 1000, reference='Sydney store'),
+        make_order('SO-2', 'Acme', date(2026, 5, 1), 500, reference='QLD store'),
+    ]
+    overrides = {'SO-1': {'group_label_override': 'SYDNEY ORDERS'}, 'SO-2': {'group_label_override': 'SYDNEY ORDERS'}}
+    groups = group_orders(orders, overrides)
+    assert len(groups) == 1
+    assert groups[0].label == 'SYDNEY ORDERS'
+
+
 def test_group_orders_override_splits_and_holds():
     orders = [
         make_order('SO-1', 'Acme', date(2026, 5, 1), 1000, reference='Sydney store'),

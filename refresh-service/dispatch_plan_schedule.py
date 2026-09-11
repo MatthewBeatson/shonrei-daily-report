@@ -129,6 +129,16 @@ class Group:
     assigned_week: int | None = None     # set by schedule_groups()
 
 
+def _ordinal(n: int) -> str:
+    """12 -> '12th', 21 -> '21st', 3 -> '3rd' -- used for multi-order group
+    labels like 'Multiple Prouds Jewellers Pty Ltd orders - 12th Aug'."""
+    if 11 <= n % 100 <= 13:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f'{n}{suffix}'
+
+
 def _normalize_order_number(v: str | None) -> str:
     """SO#s are matched exactly against overrides, but a hand-typed override
     (e.g. from the web UI) missing Cin7's 'SO-' prefix, or differing only in
@@ -226,6 +236,18 @@ def group_orders(
             g.order_date = order['order_date']
         if effective_ship_by and (g.ship_by is None or effective_ship_by < g.ship_by):
             g.ship_by = effective_ship_by
+
+    # An auto-group's label started out as whichever order happened to be
+    # processed first -- fine for a single order, misleading once a second
+    # one merges in (e.g. "PR#449(12.08)Daniel N" showing on a line that
+    # actually combines 18 different orders' references). Relabel any
+    # multi-order auto-group once its final membership is known. Override-
+    # labeled groups (the user's own explicit label, e.g. "SYDNEY ORDERS"),
+    # large-order carve-outs, and singleton groups are left alone --
+    # Matthew's call 2026-09-11.
+    for g in groups.values():
+        if g.key.startswith('auto:') and len(g.order_numbers) > 1 and g.order_date:
+            g.label = f'Multiple {g.customer} orders - {_ordinal(g.order_date.day)} {g.order_date.strftime("%b")}'
 
     return list(groups.values()) + holding
 
