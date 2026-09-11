@@ -70,6 +70,18 @@
     },
   };
 
+  // Production admin now lives on its own domain (production.shonrei.co.nz,
+  // once PRODUCTION_HOST is configured -- see backend/src/app.js) with
+  // its own login (production.production_users -- deliberately separate
+  // from reporting.report_users, see production/README.md "Its own
+  // login"), so this is just a plain link, not a session handoff --
+  // production access is meant to widen to people who must never be able
+  // to sign into this app, so there's nothing to hand over here.
+  const productionAdminLink = document.getElementById('production-admin-link');
+  if (productionAdminLink && CONFIG.PRODUCTION_APP_URL) {
+    productionAdminLink.href = CONFIG.PRODUCTION_APP_URL;
+  }
+
   // ---------------------------------------------------------------
   // "Use PIN instead" vault -- localStorage. Distinct from `session`
   // above: this is what survives a closed browser. Deliberately NOT

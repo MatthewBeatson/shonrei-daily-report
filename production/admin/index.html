@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Shonrei Production Admin</title>
+<link rel="stylesheet" href="/styles.css" />
+<link rel="stylesheet" href="admin.css" />
+<meta name="theme-color" content="#17365D" />
+<meta name="robots" content="noindex, nofollow" />
+</head>
+<body>
+
+<!-- Its own login -- deliberately NOT the daily report's sign-in.
+     production.production_users is a separate authorization table from
+     reporting.report_users (same Supabase Auth pool, different list of
+     who's let in), because production access is expected to widen to
+     people who must never be able to see the daily report. See
+     production/README.md "Its own login". -->
+<div id="view-login" class="center-screen hidden">
+  <form class="card" id="login-form" autocomplete="on">
+    <h1>Shonrei Production</h1>
+    <p class="sub">Sign in to plan production, review stocktake, and manage locations.</p>
+    <label for="login-email">Email</label>
+    <input type="email" id="login-email" name="email" autocomplete="username" required />
+    <label for="login-password">Password</label>
+    <input type="password" id="login-password" name="password" autocomplete="current-password" required />
+    <button type="submit" class="btn-primary" id="login-submit">Sign in</button>
+    <div class="error-text" id="login-error"></div>
+  </form>
+</div>
+
+<div id="view-admin" class="hidden" style="display:flex; flex-direction:column; min-height:100vh;">
+  <div class="topbar">
+    <div>
+      <h1>PRODUCTION ADMIN</h1>
+      <div class="as-of">Backorder targets &amp; batches -- see production/README.md</div>
+    </div>
+    <div class="right">
+      <a class="btn-link" id="dashboard-link" href="#" hidden style="color:#fff; opacity:0.8;">Daily report &rarr;</a>
+      <button class="btn-link" id="sign-out-btn" style="color:#fff; opacity:0.8;">Sign out</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="error-text" id="admin-error"></div>
+    <div class="success-text" id="admin-success"></div>
+
+    <!-- TARGETS -->
+    <div class="report-section">
+      <div class="section-header">TARGETS</div>
+      <div class="section-body">
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-targets-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="targets-table">
+          <thead>
+            <tr><th>SKU</th><th>Status</th><th>Outstanding qty</th><th>Cin7 assembly</th><th>Plan batches</th></tr>
+          </thead>
+          <tbody id="targets-tbody"></tbody>
+        </table>
+        <div class="sub" id="targets-empty" hidden>No targets yet -- sync demand below to create one.</div>
+      </div>
+    </div>
+
+    <!-- SYNC DEMAND -->
+    <div class="report-section">
+      <div class="section-header">SYNC BACKORDER DEMAND</div>
+      <div class="section-body">
+        <p class="sub">
+          One row per backordered SO line. Rows are grouped by SKU and summed
+          before syncing -- a SKU's target is created, adjusted, or closed to
+          match the new total (see production/README.md for the exact rules).
+          Real Cin7 SO-line extraction isn't wired in yet, so this is entered
+          by hand for now.
+        </p>
+        <table class="overrides-table" id="demand-table">
+          <thead>
+            <tr><th>SKU</th><th>SO number</th><th>Order date</th><th>Qty backordered</th><th></th></tr>
+          </thead>
+          <tbody id="demand-tbody"></tbody>
+        </table>
+        <div class="admin-toolbar">
+          <button class="btn-link" id="add-demand-row-btn">+ Add row</button>
+          <button class="btn-primary" id="sync-demand-btn">Sync targets</button>
+        </div>
+        <pre class="dry-run-output" id="sync-result" hidden></pre>
+      </div>
+    </div>
+
+    <!-- BATCHES -->
+    <div class="report-section">
+      <div class="section-header">BATCHES</div>
+      <div class="section-body">
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-batches-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="batches-table">
+          <thead>
+            <tr><th>Batch code</th><th>SKU</th><th>Priority</th><th>Planned</th><th>Status</th><th>Actual</th><th>Reported</th><th>Label</th></tr>
+          </thead>
+          <tbody id="batches-tbody"></tbody>
+        </table>
+        <div class="sub" id="batches-empty" hidden>No batches yet.</div>
+      </div>
+    </div>
+
+    <!-- STOCKTAKE -->
+    <div class="report-section">
+      <div class="section-header">STOCKTAKE</div>
+      <div class="section-body">
+        <p class="sub">
+          Counts logged from the floor app's Stocktake tab. Recording a
+          count never touches Cin7 -- review the variance here, then push
+          the ones you trust as a Cin7 stock adjustment.
+        </p>
+        <div class="admin-toolbar">
+          <label for="active-stocktake-input" class="sub">Active Cin7 Stocktake</label>
+          <input type="text" id="active-stocktake-input" placeholder="e.g. ST-00233" style="max-width:160px">
+          <button class="btn-secondary" id="save-stocktake-number-btn">Save</button>
+          <button class="btn-primary" id="sync-stocktake-btn">Sync totals to Cin7</button>
+          <button class="btn-primary" id="refresh-stocktake-btn">Refresh</button>
+        </div>
+        <p class="sub" id="stocktake-number-status"></p>
+        <p class="sub">
+          "Sync totals" sums every still-<strong>recorded</strong> count per
+          SKU across whichever areas it was counted in, and pushes one
+          adjustment per SKU tagged with the Cin7 Stocktake number above.
+          Safe to run more than once as areas finish counting. Only for
+          the formal area-based stocktake -- the per-row "Push adjustment"
+          button below is still the ad-hoc, single-SKU path.
+        </p>
+        <table class="overrides-table" id="stocktake-table">
+          <thead>
+            <tr><th>SKU</th><th>Location</th><th>Counted</th><th>Cin7 on hand</th><th>Variance</th><th>Status</th><th>Counted</th><th></th></tr>
+          </thead>
+          <tbody id="stocktake-tbody"></tbody>
+        </table>
+        <div class="sub" id="stocktake-empty" hidden>No counts yet.</div>
+      </div>
+    </div>
+
+    <!-- WAREHOUSE LOCATIONS -->
+    <div class="report-section">
+      <div class="section-header">WAREHOUSE LOCATIONS</div>
+      <div class="section-body">
+        <p class="sub">
+          One barcode per shelf/area (its location code) and one barcode
+          per SKU (reused verbatim on the SKU's own product label) -- a
+          shelf's label never shows "the" SKU there since a shelf commonly
+          holds several at once (separate containers), just its stock
+          type. Assigning a SKU's home location here is what the floor
+          app's Putaway tab checks a scan against -- see production/README.md.
+        </p>
+
+        <div class="admin-toolbar">
+          <input type="text" id="new-location-code" placeholder="Location code, e.g. RM-A1" style="max-width:150px;">
+          <input type="text" id="new-location-description" placeholder="Description (optional)" style="max-width:200px;">
+          <select id="new-location-stock-type">
+            <option value="">Stock type</option>
+            <option value="RM">RM</option>
+            <option value="SA">SA</option>
+            <option value="FP">FP</option>
+          </select>
+          <button class="btn-primary" id="add-location-btn">Add location</button>
+        </div>
+
+        <div class="admin-toolbar">
+          <label for="locations-filter" class="sub" style="margin:0;">Filter:</label>
+          <select id="locations-filter">
+            <option value="">All</option>
+            <option value="RM">RM</option>
+            <option value="SA">SA</option>
+            <option value="FP">FP</option>
+          </select>
+          <button class="btn-primary" id="refresh-locations-btn">Refresh</button>
+        </div>
+
+        <table class="overrides-table" id="locations-table">
+          <thead>
+            <tr><th>Code</th><th>Type</th><th>Description</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
+          </thead>
+          <tbody id="locations-tbody"></tbody>
+        </table>
+        <div class="sub" id="locations-empty" hidden>No locations yet -- add one above.</div>
+
+        <p class="sub" style="margin-top:16px;">Print a product/SKU label directly (same barcode as any bin it's assigned to):</p>
+        <div class="admin-toolbar">
+          <input type="text" id="sku-label-input" placeholder="SKU" style="max-width:180px;">
+          <button class="btn-primary" id="download-sku-label-btn">Download SKU label</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- PUTAWAY SCANS -->
+    <div class="report-section">
+      <div class="section-header">PUTAWAY SCANS</div>
+      <div class="section-body">
+        <p class="sub">Every scan from the floor app's Putaway tab, most recent first. Mismatches are the point of this list.</p>
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="refresh-putaway-btn">Refresh</button>
+        </div>
+        <table class="overrides-table" id="putaway-table">
+          <thead>
+            <tr><th>SKU</th><th>Scanned location</th><th>Expected</th><th>Result</th><th>By</th><th>When</th></tr>
+          </thead>
+          <tbody id="putaway-tbody"></tbody>
+        </table>
+        <div class="sub" id="putaway-empty" hidden>No putaway scans yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/production-config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

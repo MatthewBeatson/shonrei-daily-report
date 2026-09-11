@@ -37,6 +37,29 @@ services:
         sync: false
       - key: REFRESH_SHARED_SECRET
         sync: false
+      # Gates /production/run-actuals and /production/runs/open -- the
+      # floor app sends this, not a Supabase login. See production/README.md.
+      - key: FLOOR_APP_SHARED_SECRET
+        sync: false
+      # Gives the production/warehouse system its own URL on this same
+      # service (no new Render service, no new deploy) -- see
+      # production/README.md "A dedicated URL". Both optional: unset,
+      # this service behaves exactly as it did before either existed.
+      # PRODUCTION_HOST: bare hostname (e.g. production.shonrei.co.nz)
+      #   that this service should serve the production/admin + floor app
+      #   from at "/" instead of the daily report. Requires a matching
+      #   DNS CNAME to this service's Render URL, and adding that same
+      #   hostname as a Custom Domain on THIS service in Render's
+      #   dashboard (Settings -> Custom Domains) -- render.yaml can't
+      #   provision that step for you, it just needs to already be there
+      #   for requests to actually arrive with this Host header.
+      # MAIN_APP_URL: the daily report's own public URL, so the admin
+      #   screen's "back to dashboard" link (now a different origin)
+      #   knows where to point instead of guessing "/".
+      - key: PRODUCTION_HOST
+        sync: false
+      - key: MAIN_APP_URL
+        sync: false
 
   # Always-on Python service that does the actual Xero/Cin7 pulls. Never
   # exposed to end users -- only shonrei-report-web (on-demand clicks) and
