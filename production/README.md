@@ -295,7 +295,12 @@ types, and a fix for "product placed anywhere" that matches that layout:
 3. **Batch barcode** -- already existed (`batch_code`, see "Backorder
    targets and batches" above); this is what gets printed onto a sticker
    and travels with a physical run through the factory, the direct fix
-   for production runs having no physical identifier.
+   for production runs having no physical identifier. Confirmed design
+   (2026-09-11): the SKU is the label's main, large barcode -- it
+   doubles as the product's own SKU label while the batch is in flight
+   -- with the batch code as a smaller secondary barcode underneath,
+   still scannable to look the run up and report its actuals. See
+   "Batch lifecycle labelling" below.
 
 **What actually catches a misplaced product is the scan, not the printed
 label.** Since a shared shelf's label can't encode "the" SKU, the
@@ -355,6 +360,48 @@ expected location) and a scan for a SKU with no home location yet
 that the batch-label download route accepts both the floor secret and an
 admin bearer token (it's printed from both apps) and correctly 401s with
 neither.
+
+### Batch lifecycle labelling (confirmed design, 2026-09-11)
+
+Worked through the real factory flow end to end: a batch starts (e.g.
+building WIP110, a sub-assembly), gets a barcode stuck to its trolley/
+carrier, and travels the floor under that identity; a worker doing
+put-away scans the **batch** barcode, which looks the run up
+(`GET /production/batches/by-code/:code`) and lets them report actuals
+(`POST /production/batch-actuals`), which is what actually completes the
+Cin7 assembly and moves real stock. Once that happens, the batch's job
+is done -- what's left is just ordinary SKU-identified inventory, and
+labelling from that point on differs by product type:
+
+- **`batch_label_zpl`** now puts the **SKU as the main, large barcode**
+  (same payload as `sku_label_zpl`) with the **batch code as a smaller
+  secondary barcode** underneath -- one label, printed once at batch
+  start, that works as the item's own SKU label AND the batch's
+  in-flight identifier at the same time. (Previously the batch code was
+  the dominant barcode and the SKU was plain text only.)
+- **At batch completion, the floor app checks the completed SKU's
+  `stock_type`** (RM/SA/FP, via the new `POST /production/batch-actuals`
+  response field, `warehouse.sku_stock_type`):
+    - **FP (finished product)** -- auto-prompts "Print N label(s) for
+      SKU (one per item)?" right after a successful submit, `N` = the
+      good-unit count (`actual_qty`) -- FP needs a label on the back of
+      each individual unit.
+    - **SA/RM/unknown** (e.g. WIP110, commonly 1000s to a carton) -- no
+      auto-prompt; a "Print SKU label" button stays available for one
+      on-request copy, matching how these are actually stored (one
+      label per carton/container is enough, not one per unit).
+  Either way the button doubles as a reprint option if the initial
+  prompt is declined or dismissed.
+- `/production/labels/sku/:sku` now takes an optional `count` param
+  (prints that many copies in one `.zpl` file, a plain repeat of the
+  `^XA...^XZ` block -- how Zebra printers expect a multi-label job) and
+  is reachable with the floor secret, not just an admin login, since
+  put-away is a floor-app action.
+
+Not yet built: letting the floor **adjust a batch's run_size before
+printing its start label** (today `split_into_batches` sets it once, at
+planning time, with no edit step) -- flagged, deliberately deferred
+rather than bundled into this label-content change.
 
 ## Live concept -- what actually runs today
 

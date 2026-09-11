@@ -55,6 +55,20 @@ class BatchLabelZplTests(unittest.TestCase):
         self.assertIn('FG-2400-BOX', zpl)
         self.assertIn('Qty: 30', zpl)
 
+    def test_sku_is_the_main_barcode_batch_code_is_secondary(self):
+        # Confirmed design, 2026-09-11: this label doubles as the
+        # product's own SKU label while the batch is in flight -- SKU
+        # must be the dominant (first, larger) barcode, batch code a
+        # smaller secondary one, not the other way around.
+        zpl = batch_label_zpl('B-X', 'SKU123', 30)
+        self.assertEqual(zpl.count('^BCN,'), 2)
+        sku_pos = zpl.index('^FDSKU123^FS')
+        batch_pos = zpl.index('^FDB-X^FS')
+        self.assertLess(sku_pos, batch_pos)
+        # The SKU barcode is taller (140/120 range) than the batch one (60).
+        self.assertIn('^BCN,120,Y,N,N', zpl)
+        self.assertIn('^BCN,60,Y,N,N', zpl)
+
     def test_whole_number_qty_has_no_trailing_decimal(self):
         zpl = batch_label_zpl('B-X', 'SKU', 30.0)
         self.assertIn('Qty: 30', zpl)

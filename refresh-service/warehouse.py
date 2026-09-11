@@ -49,6 +49,28 @@ def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: 
     }
 
 
+def sku_stock_type(conn, sku: str) -> str | None:
+    """A SKU's RM/SA/FP classification, derived from its home location's
+    own stock_type (migration 011) -- there's no per-SKU field for this,
+    only per-location, so a SKU with no home location assigned, or whose
+    home location has no stock_type set, returns None. Used to decide
+    label-printing behaviour at batch completion (see backorder_targets.
+    apply_batch_actual): FP gets an auto "print one label per item"
+    prompt, SA/RM/unknown doesn't (matches how these are actually
+    stored -- an SA like WIP110 sits 1000s-to-a-carton, one SKU label on
+    request is enough; FP needs a label on the back of each unit).
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """select l.stock_type from warehouse.sku_locations sl
+               join warehouse.locations l on l.id = sl.location_id
+               where sl.sku = %s""",
+            (sku,),
+        )
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
 def set_home_location(conn, sku: str, location_code: str) -> dict:
     with conn.cursor() as cur:
         cur.execute("select id from warehouse.locations where code = %s", (location_code,))

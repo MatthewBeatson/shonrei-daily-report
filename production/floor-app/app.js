@@ -218,7 +218,7 @@ async function submitBatch() {
   const reportedVia = currentBatch._openedViaCode ? 'barcode' : 'manual';
 
   try {
-    await apiFetch('/production/batch-actuals', {
+    const result = await apiFetch('/production/batch-actuals', {
       method: 'POST',
       body: JSON.stringify({
         batch_id: currentBatch.id,
@@ -232,10 +232,38 @@ async function submitBatch() {
       (rejectQty ? ` (${rejectQty} rejected)` : '') + '.';
     confirmStep.hidden = true;
     doneStep.hidden = false;
+    await handleCompletionLabels(result.stock_type, currentBatch.sku, actualQty);
   } catch (err) {
     alert(`Couldn't submit: ${err.message}`);
   } finally {
     submitBtn.disabled = false;
+  }
+}
+
+// FP: needs a label on the back of each good unit -- auto-prompt right
+// away, matching how batch labels already auto-appear at scan time (no
+// separate reminder step to forget). SA/RM/unknown (e.g. WIP110, stored
+// 1000s to a carton): no prompt, but the button stays available for the
+// on-request single-carton case. Either way the button is left visible
+// afterward as a reprint option.
+async function handleCompletionLabels(stockType, sku, goodUnitCount) {
+  const btn = document.getElementById('printSkuLabelBtn');
+  btn.hidden = false;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const count = stockType === 'FP' ? goodUnitCount : 1;
+      await downloadLabel(`/production/labels/sku/${encodeURIComponent(sku)}?count=${count}`, `sku-${sku}.zpl`);
+    } catch (err) {
+      alert(`Couldn't get label: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  btn.textContent = stockType === 'FP' ? `Print ${goodUnitCount} SKU label(s)` : 'Print SKU label';
+
+  if (stockType === 'FP' && confirm(`Print ${goodUnitCount} label(s) for ${sku} (one per item)?`)) {
+    btn.click();
   }
 }
 
@@ -245,6 +273,7 @@ function resetToScan() {
   confirmStep.hidden = true;
   doneStep.hidden = true;
   rescanBtn.hidden = true;
+  document.getElementById('printSkuLabelBtn').hidden = true;
   document.getElementById('rejectBlock').hidden = true;
   document.getElementById('rejectValue').value = 0;
   scanError.hidden = true;

@@ -20,6 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'production' / 'planner'))
 from target_sync import ExistingTarget, apply_actual_to_target, plan_target_actions  # noqa: E402
+from warehouse import sku_stock_type  # noqa: E402 -- sibling module, refresh-service/warehouse.py
 
 
 class DemandExtractionNotConfirmed(NotImplementedError):
@@ -197,7 +198,15 @@ def apply_batch_actual(
     conn.commit()
     return {
         'batch_id': batch_id,
+        'sku': sku,
+        'actual_qty': actual_qty,
         'cin7_small_assembly_id': small_assembly.assembly_id,
         'target_outstanding_qty': new_outstanding,
         'target_closed': new_outstanding <= 0,
+        # RM/SA/FP, or null if this SKU has no home location (and so no
+        # classification) set yet -- see warehouse.sku_stock_type. The
+        # floor app uses this to decide whether to auto-prompt "print a
+        # label per item" (FP) or leave labelling to an on-request SKU-
+        # label print (SA/RM/unknown, e.g. WIP110 stored 1000s-to-a-carton).
+        'stock_type': sku_stock_type(conn, sku),
     }

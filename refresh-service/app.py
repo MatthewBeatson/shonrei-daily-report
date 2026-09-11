@@ -387,10 +387,20 @@ def label_sku(sku):
     """Same barcode payload (the literal SKU text) whether this label
     ends up on a bin/location label or stuck straight onto the product --
     see production/planner/labels.py.
+
+    `count` prints that many copies in one file (default 1) -- used for
+    FP's "one label per item" auto-print (see /production/batches/
+    <id>/actual's stock_type in the response, and floor-app/app.js),
+    a plain repeat of the same ^XA...^XZ block, which is how Zebra
+    printers expect multiple labels in one job.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
-    zpl = sku_label_zpl(sku, description=request.args.get('description'))
+    try:
+        count = max(1, int(request.args.get('count', 1)))
+    except ValueError:
+        return jsonify({'error': 'count must be a whole number'}), 400
+    zpl = sku_label_zpl(sku, description=request.args.get('description')) * count
     return _zpl_response(zpl, f'sku-{sku}.zpl')
 
 

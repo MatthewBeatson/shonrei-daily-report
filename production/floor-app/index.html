@@ -80,6 +80,12 @@
       <section class="done-card" id="doneStep" hidden>
         <div class="icon">&#10003;</div>
         <p id="doneMessage">Reported. Cin7 will be updated automatically.</p>
+        <!-- FP: shown automatically after submit (see submitBatch) -- one
+             label per good unit, since these need a label on the back of
+             each item. SA/RM/unknown: not auto-prompted, but the button
+             stays available on request -- e.g. WIP110, stored 1000s to a
+             carton, only needs the one SKU label for the carton. -->
+        <button class="print-label-btn" id="printSkuLabelBtn" hidden>Print SKU label</button>
         <button id="doneRescanBtn">Report another</button>
       </section>
     </div>

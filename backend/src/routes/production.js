@@ -397,8 +397,15 @@ router.get('/warehouse/putaway-scans', requireProductionAuth, asyncHandler(async
 //    labels.py). Same SKU barcode reused across the location label and
 //    the product's own label; a separate barcode for the location itself.
 
-router.get('/labels/sku/:sku', requireProductionAuth, asyncHandler(async (req, res) => {
-  const qs = req.query.description ? `?description=${encodeURIComponent(req.query.description)}` : '';
+// Also reachable from the floor (requireFloorOrProductionAuth, not just
+// admin) -- an SA batch's put-away is "print one SKU label for the
+// carton, on request", not an admin-only step. `count` prints that many
+// copies in one file (used for FP's "one label per item" auto-prompt).
+router.get('/labels/sku/:sku', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const params = new URLSearchParams();
+  if (req.query.description) params.set('description', req.query.description);
+  if (req.query.count) params.set('count', req.query.count);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   await streamRefreshServiceFile(`/labels/sku/${encodeURIComponent(req.params.sku)}${qs}`, res);
 }));
 

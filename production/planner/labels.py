@@ -85,19 +85,33 @@ def batch_label_zpl(batch_code: str, sku: str, qty_planned: float, priority_rank
     product) so nobody has to remember or guess which pile is which.
     This is the direct fix for production runs having no physical
     identifier -- see production/README.md.
+
+    The SKU is the main, large barcode -- this label doubles as the
+    product's own identifier while the batch is in flight (matches
+    sku_label_zpl's payload exactly), so whoever's scanning at the next
+    production stage just scans the same barcode they'd scan on a
+    finished product. The batch code is a smaller, secondary barcode
+    underneath -- still scannable (to report actuals against this
+    specific run via the floor app), just not the dominant one. Once the
+    batch completes and the item is put away, this label comes off and
+    an ordinary SKU label takes over -- the batch code stops mattering
+    at that point (confirmed design, 2026-09-11: the batch record itself
+    is what's finished, not the barcode).
     """
     batch_code = _escape_zpl_text(batch_code)
     sku = _escape_zpl_text(sku)
     qty_text = _escape_zpl_text(_format_qty(qty_planned))
     priority_line = (
-        f"^FO40,330^A0N,26,26^FDPriority {int(priority_rank)}^FS\n" if priority_rank is not None else ""
+        f"^FO320,270^A0N,24,24^FDPriority {int(priority_rank)}^FS\n" if priority_rank is not None else ""
     )
     return (
         "^XA\n"
         f"^PW{LABEL_WIDTH_DOTS}\n^LL{LABEL_HEIGHT_DOTS}\n"
-        f"^FO40,20^A0N,32,32^FD{sku}^FS\n"
-        f"^FO40,60^BY3\n^BCN,140,Y,N,N\n^FD{batch_code}^FS\n"
-        f"^FO40,290^A0N,28,28^FDQty: {qty_text}^FS\n"
+        "^FO40,20^A0N,28,28^FDSKU^FS\n"
+        f"^FO40,55^BY3\n^BCN,120,Y,N,N\n^FD{sku}^FS\n"
+        "^FO40,225^A0N,22,22^FDBatch^FS\n"
+        f"^FO40,252^BY2\n^BCN,60,Y,N,N\n^FD{batch_code}^FS\n"
+        f"^FO320,235^A0N,24,24^FDQty: {qty_text}^FS\n"
         f"{priority_line}"
         "^XZ\n"
     )
