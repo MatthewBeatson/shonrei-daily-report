@@ -727,8 +727,21 @@ rather than a separate DELETE call. This session's test assembly records
 ended up voided manually in Cin7's own UI instead of through this
 script, which doesn't test `close_assembly()` at all (that's a direct
 UI action, not a call through the API client) -- so this is still open,
-next time a test assembly exists to try it against. `adjust_stock_on_hand`
-(stock adjustment) hasn't been live-tested at all yet either.
+next time a test assembly exists to try it against.
+
+**`adjust_stock_on_hand` live-tested (2026-09-11, WIP110), one fix
+needed:** a genuine no-op adjustment (targeting the SKU's own current
+on-hand, via `scripts/test_adjust_stock_on_hand.py`) 400'd --
+`"'UnitCost' attribute is required."` -- not documented as mandatory at
+all. Also surfaced a real gap in `_post_json`/`_put_json`: they called
+`raise_for_status()` before ever inspecting the response body, so the
+error that reached the terminal was just "400 Client Error", not what
+Cin7 actually said -- fixed with a new `_raise_for_status_with_body`
+helper (now used everywhere `raise_for_status()` was called directly,
+reads included), which is what surfaced the real message above. Fixed:
+`adjust_stock_on_hand` now sends `UnitCost` from the product's own real
+`AverageCost` field, not a guessed number. Re-test pending -- next run
+should confirm the full round trip actually succeeds.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through

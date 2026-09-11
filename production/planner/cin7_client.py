@@ -767,6 +767,13 @@ class Cin7Client:
         the adjustment, not a delta (on-hand 601, Quantity=600 submitted,
         resulting transaction -1) -- `new_qty` is passed straight through
         as that target level, matching stocktake.py's counted_qty.
+
+        UnitCost is required -- confirmed live (2026-09-11, WIP110, a
+        no-op adjustment to the SKU's own current on-hand): a 400
+        ("'UnitCost' attribute is required.") wasn't documented as
+        mandatory in Cin7's docs at all. Uses the product's own
+        AverageCost (a real field on the product record, not guessed)
+        rather than inventing a number.
         """
         product = self._get_product(sku)
         line = {
@@ -775,6 +782,7 @@ class Cin7Client:
             "ProductName": product.get("Name"),
             "Location": product.get("DefaultLocation"),
             "Quantity": new_qty,
+            "UnitCost": product.get("AverageCost") or 0,
             "Comments": note or "",
         }
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")

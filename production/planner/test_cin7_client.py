@@ -219,7 +219,10 @@ class GetStockOnHandTests(unittest.TestCase):
 
 PRODUCT_FOR_CREATE = {
     "Total": 1, "Page": 1,
-    "Products": [{"ID": "product-guid-1", "SKU": "FG-ASSEMBLED", "Name": "Assembled thing", "DefaultLocation": "Main Warehouse"}],
+    "Products": [{
+        "ID": "product-guid-1", "SKU": "FG-ASSEMBLED", "Name": "Assembled thing",
+        "DefaultLocation": "Main Warehouse", "AverageCost": 5.9533,
+    }],
 }
 
 CREATE_RESPONSE = {
@@ -705,6 +708,9 @@ class AdjustStockOnHandTests(unittest.TestCase):
         self.assertIn('/stockadjustment', post_args[0])
         self.assertEqual(post_kwargs['json']['Status'], 'DRAFT')
         self.assertEqual(post_kwargs['json']['Lines'][0]['Quantity'], 600.0)  # target level, not a delta
+        # Confirmed live, 2026-09-11: 400's without UnitCost ("'UnitCost'
+        # attribute is required.") -- uses the product's own real AverageCost.
+        self.assertEqual(post_kwargs['json']['Lines'][0]['UnitCost'], 5.9533)
         put_args, put_kwargs = mock_put.call_args
         self.assertIn('/stockadjustment', put_args[0])
         self.assertEqual(put_kwargs['json']['TaskID'], 'adj-task-1')
