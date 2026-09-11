@@ -54,9 +54,16 @@ class DryRunCin7Client:
     def close_assembly(self, assembly_id: str) -> None:
         self._log('close_assembly', assembly_id=assembly_id)
 
-    def complete_small_assembly(self, sku: str, qty: float) -> FakeAssembly:
-        self._log('complete_small_assembly', sku=sku, qty=qty)
-        return FakeAssembly(sku, qty, 'COMPLETED')
+    def complete_small_assembly(
+        self, sku: str, run_size: float, actual_yield: float | None = None, *,
+        labour_hours_overrides: dict | None = None, pick_line_overrides: dict | None = None,
+    ) -> FakeAssembly:
+        actual_yield = run_size if actual_yield is None else actual_yield
+        self._log(
+            'complete_small_assembly', sku=sku, run_size=run_size, actual_yield=actual_yield,
+            labour_hours_overrides=labour_hours_overrides, pick_line_overrides=pick_line_overrides,
+        )
+        return FakeAssembly(sku, actual_yield, 'COMPLETED')
 
     def get_stock_on_hand(self, sku: str) -> float:
         # Deterministic-but-fake so a repeated count of the same SKU in a

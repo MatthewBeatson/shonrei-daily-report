@@ -328,7 +328,11 @@ class Cin7Client:
         resp.raise_for_status()
         return resp.json()
 
-    def _component_lines_for_build(self, sku: str, build_qty: float) -> list[dict]:
+    def _component_lines_for_build(
+        self, sku: str, build_qty: float, *,
+        labour_hours_overrides: dict[str, float] | None = None,
+        pick_line_overrides: dict[str, float] | None = None,
+    ) -> list[dict]:
         """Real per-component BOM lines for one build of `sku` at
         `build_qty`, scaled to totals -- feeds both authorise_assembly's
         OrderLines and complete_assembly's PickLines.
@@ -354,29 +358,60 @@ class Cin7Client:
         ProductCode is sent as "" and Wastage*/left at 0 for them, rather
         than omitted, since every line in one OrderLines/PickLines list
         needs the same shape.
+
+        `labour_hours_overrides`: {name-substring (case-insensitive):
+        actual hours}, e.g. {"engineering": 0.5} -- when a labour line's
+        Name matches, its per-unit Quantity becomes hours/build_qty and
+        TotalQuantity becomes the hours straight through, instead of the
+        BOM's standard rate. Only usable when Authorise hasn't happened
+        yet (this feeds authorise_assembly's OrderLines) -- once an
+        assembly is Authorised, OrderLines can never be resubmitted
+        (confirmed live, 2026-09-11: "Finished Goods task Status is
+        AUTHORISED."), so a labour line's actual hours can only be
+        entered at the SAME moment as Authorise. This is exactly why
+        complete_small_assembly (Create+Authorise+Complete all at once,
+        at report time) can support this, while a general Create-now-
+        Authorise-later-Complete-even-later path never could.
+
+        `pick_line_overrides`: {ProductCode (exact, case-sensitive SKU):
+        overridden TotalQuantity} -- when a physical component's
+        ProductCode matches, its TotalQuantity is replaced (e.g. a
+        substitution or a corrected actual usage figure), instead of the
+        BOM's standard rate x build_qty. Feeds complete_assembly's
+        PickLines, which is submitted fresh at Complete every time (no
+        Authorise-style lock), so this is usable right up to Complete.
         """
         product = self._get_product(sku, include_bom=True)
         lines = []
         for line in product.get("BillOfMaterialsProducts") or []:
             qty_per = line.get("Quantity") or 0
+            total_qty = qty_per * build_qty
+            product_code = line.get("ProductCode")
+            if pick_line_overrides and product_code in pick_line_overrides:
+                total_qty = pick_line_overrides[product_code]
             lines.append({
                 "ProductID": line.get("ComponentProductID"),
-                "ProductCode": line.get("ProductCode"),
+                "ProductCode": product_code,
                 "Name": line.get("Name"),
                 "Quantity": qty_per,
-                "TotalQuantity": qty_per * build_qty,
+                "TotalQuantity": total_qty,
                 "WastagePercent": line.get("WastagePercent") or 0,
                 "WastageQuantity": line.get("WastageQuantity") or 0,
                 "ExpenseAccount": "",
             })
         for line in product.get("BillOfMaterialsServices") or []:
             qty_per = line.get("Quantity") or 0
+            total_qty = qty_per * build_qty
+            override_hours = self._match_override(labour_hours_overrides, line.get("Name"))
+            if override_hours is not None:
+                total_qty = override_hours
+                qty_per = override_hours / build_qty if build_qty else 0
             lines.append({
                 "ProductID": line.get("ComponentProductID"),
                 "ProductCode": "",
                 "Name": line.get("Name"),
                 "Quantity": qty_per,
-                "TotalQuantity": qty_per * build_qty,
+                "TotalQuantity": total_qty,
                 "WastagePercent": 0,
                 "WastageQuantity": 0,
                 "ExpenseAccount": line.get("ExpenseAccount") or "",
@@ -389,6 +424,16 @@ class Cin7Client:
                 "PriceTier": line.get("PriceTier") or 1,
             })
         return lines
+
+    @staticmethod
+    def _match_override(overrides: dict[str, float] | None, name: str | None) -> float | None:
+        if not overrides or not name:
+            return None
+        name_lower = name.lower()
+        for key, value in overrides.items():
+            if key.lower() in name_lower:
+                return value
+        return None
 
     @staticmethod
     def _assembly_from(body: dict) -> Assembly:
@@ -432,13 +477,21 @@ class Cin7Client:
         })
         return self._assembly_from(body)
 
-    def authorise_assembly(self, assembly_id: str) -> Assembly:
+    def authorise_assembly(self, assembly_id: str, *, labour_hours_overrides: dict[str, float] | None = None) -> Assembly:
         """Stage 2: Authorise. POST /finishedGoods/order with OrderLines
         built from the product's own BOM (see _component_lines_for_build
         -- Cin7 does NOT auto-populate these at Create time, confirmed
-        live 2026-09-11)."""
+        live 2026-09-11).
+
+        `labour_hours_overrides`: optional {name-substring: actual hours}
+        -- see _component_lines_for_build's docstring for the full
+        picture of why this only works here (at Authorise), not later.
+        """
         full = self._get_full_assembly(assembly_id)
-        order_lines = self._component_lines_for_build(full.get("ProductCode"), full.get("Quantity") or 0)
+        order_lines = self._component_lines_for_build(
+            full.get("ProductCode"), full.get("Quantity") or 0,
+            labour_hours_overrides=labour_hours_overrides,
+        )
         if not order_lines:
             raise NotImplementedError(
                 f"authorise_assembly({assembly_id!r}): no BOM lines found for "
@@ -475,7 +528,10 @@ class Cin7Client:
             "see allocate_assembly's docstring"
         )
 
-    def complete_assembly(self, assembly_id: str, actual_qty: float) -> Assembly:
+    def complete_assembly(
+        self, assembly_id: str, actual_qty: float, *,
+        pick_line_overrides: dict[str, float] | None = None,
+    ) -> Assembly:
         """Stage 4: Complete. POST /finishedGoods/pick with PickLines
         built from the product's own BOM (same reasoning as
         authorise_assembly -- Cin7 doesn't auto-populate these either)
@@ -518,12 +574,20 @@ class Cin7Client:
         itself (confirmed working at the UI level, 2026-09-11) -- but
         the run size used for PickLines is captured BEFORE that call,
         from the assembly's Quantity as it stood going into Complete.
+
+        `pick_line_overrides`: optional {ProductCode: overridden
+        TotalQuantity} -- see _component_lines_for_build's docstring.
+        Unlike labour hours, this works right up to Complete since
+        PickLines has no Authorise-style lock.
         """
         full = self._get_full_assembly(assembly_id)
         run_size = full.get("Quantity")
         if run_size is not None and float(run_size) != float(actual_qty):
             self.adjust_assembly_qty(assembly_id, actual_qty)
-        component_lines = self._component_lines_for_build(full.get("ProductCode"), run_size if run_size is not None else actual_qty)
+        component_lines = self._component_lines_for_build(
+            full.get("ProductCode"), run_size if run_size is not None else actual_qty,
+            pick_line_overrides=pick_line_overrides,
+        )
         pick_lines = [
             {
                 "ProductID": line["ProductID"],
@@ -620,18 +684,39 @@ class Cin7Client:
         resp.raise_for_status()
         self._raise_if_errors(resp.json())
 
-    def complete_small_assembly(self, sku: str, qty: float) -> Assembly:
-        """The actual FG-creating call: Create -> Authorise -> Complete
-        for one batch's reported actual quantity, at the qty that's
-        actually being completed from the start -- so there's no
-        Allocate-stage gap and no later quantity mismatch for
-        complete_assembly to reject (see its docstring). This is the only
-        place in the whole backorder-target flow that a real Cin7
-        assembly gets completed and stock genuinely moves -- everything
-        upstream (targets, batches) is planning state only."""
-        assembly = self.create_assembly(sku, qty)
-        assembly = self.authorise_assembly(assembly.assembly_id)
-        return self.complete_assembly(assembly.assembly_id, qty)
+    def complete_small_assembly(
+        self, sku: str, run_size: float, actual_yield: float | None = None, *,
+        labour_hours_overrides: dict[str, float] | None = None,
+        pick_line_overrides: dict[str, float] | None = None,
+    ) -> Assembly:
+        """The actual FG-creating call: Create -> Authorise -> Complete,
+        all at once, at batch-report time -- this is the only place in
+        the whole backorder-target flow that a real Cin7 assembly gets
+        completed and stock genuinely moves; everything upstream
+        (targets, batches) is planning state only.
+
+        `run_size`: how much was actually fed into the process (what
+        Create/Authorise are for, and what PickLines' physical component
+        consumption is scaled to -- material doesn't shrink just because
+        fewer good units came out, see complete_assembly's docstring).
+
+        `actual_yield`: the count of GOOD finished units -- defaults to
+        `run_size` (the old single-`qty` behaviour: assume zero scrap)
+        when not given. Recorded on the assembly via adjust_assembly_qty
+        if it differs from `run_size`.
+
+        `labour_hours_overrides` / `pick_line_overrides`: optional, see
+        _component_lines_for_build's docstring. Because this method does
+        Create+Authorise+Complete together at report time (not Authorise
+        days earlier), labour_hours_overrides is actually usable here --
+        unlike a general Create-now-Authorise-later path, there's no
+        "OrderLines already locked" problem yet when this call starts.
+        """
+        if actual_yield is None:
+            actual_yield = run_size
+        assembly = self.create_assembly(sku, run_size)
+        assembly = self.authorise_assembly(assembly.assembly_id, labour_hours_overrides=labour_hours_overrides)
+        return self.complete_assembly(assembly.assembly_id, actual_yield, pick_line_overrides=pick_line_overrides)
 
     # -- stocktake (see refresh-service/stocktake.py) -------------------
     # Replaces the old Google Sheet + AppSheet workflow. A count is

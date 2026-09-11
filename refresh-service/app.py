@@ -232,11 +232,16 @@ def production_plan_batches(target_id):
 
 @app.post('/production/batches/<batch_id>/actual')
 def production_batch_actual(batch_id):
-    """Body: {"actual_qty", "reject_qty", "reported_via", "reported_by"}.
-    The floor-input endpoint's backend: completes a real (today: dry-run)
-    small Cin7 assembly and decrements the parent target. Called by the
-    Node backend's POST /production/batch-actuals, not directly by the
-    floor app -- see backend/src/routes/production.js.
+    """Body: {"actual_qty", "reject_qty", "reported_via", "reported_by",
+    "labour_hours_overrides", "pick_line_overrides"}. The floor-input
+    endpoint's backend: completes a real (today: dry-run) small Cin7
+    assembly and decrements the parent target. Called by the Node
+    backend's POST /production/batch-actuals, not directly by the floor
+    app -- see backend/src/routes/production.js.
+
+    labour_hours_overrides/pick_line_overrides are optional, for a
+    future floor-app quick-add UI (see cin7_client.complete_small_
+    assembly's docstring) -- no floor-app screen sends these yet.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -253,6 +258,8 @@ def production_batch_actual(batch_id):
                 conn, DryRunCin7Client(conn), batch_id,
                 actual_qty, payload.get('reject_qty') or 0,
                 payload.get('reported_via') or 'manual', payload.get('reported_by'),
+                labour_hours_overrides=payload.get('labour_hours_overrides'),
+                pick_line_overrides=payload.get('pick_line_overrides'),
             )
         except ValueError as exc:
             conn.rollback()

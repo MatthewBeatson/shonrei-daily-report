@@ -123,13 +123,31 @@ def sync_targets(conn, cin7, demand_lines_by_sku: dict[str, list[dict]]) -> list
     return results
 
 
-def apply_batch_actual(conn, cin7, batch_id: str, actual_qty: float, reject_qty: float, reported_via: str, reported_by: str | None) -> dict:
+def apply_batch_actual(
+    conn, cin7, batch_id: str, actual_qty: float, reject_qty: float, reported_via: str, reported_by: str | None, *,
+    labour_hours_overrides: dict[str, float] | None = None,
+    pick_line_overrides: dict[str, float] | None = None,
+) -> dict:
     """The floor-input side: records a batch's actual quantity, completes
-    a real small Cin7 assembly for it (Create->Authorise->Allocate->
-    Complete, see cin7_client.complete_small_assembly), and decrements
-    the parent target's outstanding_qty (clamped at zero -- see
+    a real small Cin7 assembly for it (Create->Authorise->Complete, see
+    cin7_client.complete_small_assembly), and decrements the parent
+    target's outstanding_qty (clamped at zero -- see
     target_sync.apply_actual_to_target), closing the target out via Cin7
     if that reaches zero.
+
+    `reject_qty` now actually affects Cin7, not just the DB record it's
+    always been written to: run_size (what was actually fed into the
+    process, and what real component stock gets consumed for) is
+    actual_qty + reject_qty, not actual_qty alone -- rejects still
+    consumed material and labour time, they just didn't come out good
+    (see complete_small_assembly's docstring for why this distinction
+    matters). Only actual_qty (the good units) is used for
+    outstanding_qty and Cin7's own "Actual yield".
+
+    `labour_hours_overrides` / `pick_line_overrides` are optional
+    pass-throughs for a future floor-app quick-add UI (see
+    complete_small_assembly's docstring) -- not yet exposed anywhere
+    upstream of this function.
     """
     with conn.cursor() as cur:
         cur.execute(
@@ -146,7 +164,11 @@ def apply_batch_actual(conn, cin7, batch_id: str, actual_qty: float, reject_qty:
     if status != 'planned' and status != 'issued':
         raise ValueError(f"Batch is already '{status}' -- can't report actuals again")
 
-    small_assembly = cin7.complete_small_assembly(sku, actual_qty)
+    run_size = actual_qty + (reject_qty or 0)
+    small_assembly = cin7.complete_small_assembly(
+        sku, run_size, actual_qty,
+        labour_hours_overrides=labour_hours_overrides, pick_line_overrides=pick_line_overrides,
+    )
 
     with conn.cursor() as cur:
         cur.execute(

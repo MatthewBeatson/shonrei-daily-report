@@ -518,6 +518,125 @@ class CompleteSmallAssemblyTests(unittest.TestCase):
         self.assertEqual(assembly.status, 'COMPLETED')
 
 
+# -- labour-hours / pick-line override tests -- the floor-app "quick add"
+# capability: labour_hours_overrides only works at Authorise time (see
+# _component_lines_for_build's docstring for why), pick_line_overrides
+# works right up to Complete since PickLines has no Authorise-style lock.
+
+class ComponentLinesForBuildOverrideTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.get')
+    def test_labour_hours_override_replaces_the_standard_bom_rate(self, mock_get):
+        mock_get.return_value = _mock_write_response(PRODUCT_WITH_BOM)
+        # PRODUCT_WITH_BOM's labour line is "LABOUR - Gluing Room", 1.5/unit.
+        lines = self.client._component_lines_for_build(
+            'FG-ASSEMBLED', 5.0, labour_hours_overrides={'gluing': 3.0},
+        )
+        labour_line = next(l for l in lines if l['Name'] == 'LABOUR - Gluing Room')
+        physical_line = next(l for l in lines if l['ProductCode'] == 'RAW-CARDBOARD')
+        self.assertEqual(labour_line['TotalQuantity'], 3.0)  # entered hours straight through
+        self.assertEqual(labour_line['Quantity'], 3.0 / 5.0)  # per-unit = hours / build_qty
+        # Physical line untouched by a labour override.
+        self.assertEqual(physical_line['TotalQuantity'], 10.0)
+
+    @patch('cin7_client.requests.get')
+    def test_pick_line_override_replaces_the_standard_bom_total(self, mock_get):
+        mock_get.return_value = _mock_write_response(PRODUCT_WITH_BOM)
+        lines = self.client._component_lines_for_build(
+            'FG-ASSEMBLED', 5.0, pick_line_overrides={'RAW-CARDBOARD': 7.5},
+        )
+        physical_line = next(l for l in lines if l['ProductCode'] == 'RAW-CARDBOARD')
+        labour_line = next(l for l in lines if l['Name'] == 'LABOUR - Gluing Room')
+        self.assertEqual(physical_line['TotalQuantity'], 7.5)  # overridden
+        self.assertEqual(physical_line['Quantity'], 2.0)  # per-unit rate left as-is
+        # Labour line untouched by a pick-line override.
+        self.assertEqual(labour_line['TotalQuantity'], 7.5)  # 1.5 * 5.0, unaffected
+
+    @patch('cin7_client.requests.get')
+    def test_no_override_match_leaves_lines_at_the_standard_bom_rate(self, mock_get):
+        mock_get.return_value = _mock_write_response(PRODUCT_WITH_BOM)
+        lines = self.client._component_lines_for_build(
+            'FG-ASSEMBLED', 5.0, labour_hours_overrides={'blanking': 9.0},  # doesn't match "Gluing Room"
+        )
+        labour_line = next(l for l in lines if l['Name'] == 'LABOUR - Gluing Room')
+        self.assertEqual(labour_line['TotalQuantity'], 7.5)  # unaffected -- 1.5 * 5.0
+
+
+class AuthoriseAssemblyOverrideTests(unittest.TestCase):
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_passes_labour_hours_overrides_through_to_order_lines(self, mock_get, mock_post):
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_DRAFT), _mock_write_response(PRODUCT_WITH_BOM), _mock_write_response(FULL_ASSEMBLY_AUTHORISED)]
+        mock_post.return_value = _mock_write_response(AUTHORISE_RESPONSE)
+
+        client = Cin7Client(account_id='x', api_key='y')
+        client.authorise_assembly('task-1', labour_hours_overrides={'gluing': 2.5})
+
+        post_args, post_kwargs = mock_post.call_args
+        sent_lines = post_kwargs['json']['OrderLines']
+        labour_line = next(l for l in sent_lines if l['Name'] == 'LABOUR - Gluing Room')
+        self.assertEqual(labour_line['TotalQuantity'], 2.5)
+
+
+class CompleteAssemblyOverrideTests(unittest.TestCase):
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_passes_pick_line_overrides_through_to_pick_lines(self, mock_get, mock_post):
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_AUTHORISED), _mock_write_response(PRODUCT_WITH_BOM), _mock_write_response(FULL_ASSEMBLY_COMPLETED)]
+        mock_post.return_value = _mock_write_response(COMPLETE_RESPONSE)
+
+        client = Cin7Client(account_id='x', api_key='y')
+        # FULL_ASSEMBLY_AUTHORISED's Quantity is 5.0 -- completing at the
+        # same qty (5.0) so no adjust_assembly_qty call complicates the mock.
+        client.complete_assembly('task-1', 5.0, pick_line_overrides={'RAW-CARDBOARD': 12.0})
+
+        post_args, post_kwargs = mock_post.call_args
+        sent_lines = post_kwargs['json']['PickLines']
+        self.assertEqual(len(sent_lines), 1)  # labour line still excluded from PickLines
+        self.assertEqual(sent_lines[0]['ProductCode'], 'RAW-CARDBOARD')
+        self.assertEqual(sent_lines[0]['Quantity'], 12.0)
+
+
+class CompleteSmallAssemblyRunSizeTests(unittest.TestCase):
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_actual_yield_below_run_size_is_recorded_but_doesnt_shrink_pick_lines(self, mock_get, mock_post):
+        # A run_size/actual_yield split (10 fed in, 8 good out) -- PickLines
+        # must reflect the run size (10), not the smaller actual_yield (8).
+        full_assembly_run_10 = dict(FULL_ASSEMBLY_DRAFT, Quantity=10.0)
+        full_assembly_authorised_10 = dict(full_assembly_run_10, Status='AUTHORISED')
+        mock_get.side_effect = [
+            _mock_write_response(PRODUCT_FOR_CREATE),           # create_assembly's product lookup
+            _mock_write_response(full_assembly_run_10),         # authorise_assembly's own-record fetch
+            _mock_write_response(PRODUCT_WITH_BOM),             # authorise_assembly's BOM fetch (at run_size 10)
+            _mock_write_response(full_assembly_authorised_10),  # authorise_assembly's post-authorise refetch
+            _mock_write_response(full_assembly_authorised_10),  # complete_assembly's run-size fetch (10.0)
+            _mock_write_response(full_assembly_authorised_10),  # adjust_assembly_qty's own-record fetch
+            _mock_write_response(dict(full_assembly_authorised_10, Quantity=8.0)),  # adjust's post-PUT refetch
+            _mock_write_response(PRODUCT_WITH_BOM),             # complete_assembly's BOM fetch (still at run_size 10)
+            _mock_write_response(FULL_ASSEMBLY_COMPLETED),      # complete_assembly's post-complete refetch
+        ]
+        mock_post.side_effect = [
+            _mock_write_response(dict(CREATE_RESPONSE, Quantity=10.0)),
+            _mock_write_response(AUTHORISE_RESPONSE),
+            _mock_write_response(COMPLETE_RESPONSE),
+        ]
+        with patch('cin7_client.requests.put') as mock_put:
+            mock_put.return_value = _mock_write_response({"TaskID": "task-1", "Quantity": 8.0})
+
+            client = Cin7Client(account_id='x', api_key='y')
+            client.complete_small_assembly('FG-ASSEMBLED', 10.0, 8.0)
+
+            put_args, put_kwargs = mock_put.call_args
+            self.assertEqual(put_kwargs['json']['Quantity'], 8.0)  # records the good-yield count
+
+        complete_post_kwargs = mock_post.call_args_list[2][1]
+        pick_line = next(l for l in complete_post_kwargs['json']['PickLines'] if l['ProductCode'] == 'RAW-CARDBOARD')
+        self.assertEqual(pick_line['Quantity'], 20.0)  # 2.0/unit * run_size 10.0, NOT actual_yield 8.0 (would be 16.0)
+
+
 class GetOpenAssembliesTests(unittest.TestCase):
     @patch('cin7_client.requests.get')
     def test_excludes_completed_and_voided_and_filters_to_exact_sku(self, mock_get):

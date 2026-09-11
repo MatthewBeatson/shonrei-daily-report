@@ -644,19 +644,16 @@ qty differs from what was authorised, instead of hard-blocking.
   `Cin7Client` methods directly) is built to re-confirm this actually
   works end to end.
 - A second hypothesis -- correcting one labour line's actual hours by
-  re-submitting `OrderLines` (`POST /finishedGoods/order` again) after
+  re-submitting `OrderLines` (`POST /finishedGoods/order` again) AFTER
   an assembly is already Authorised -- is confirmed **impossible**:
   `"Finished Goods task Status is AUTHORISED."` `OrderLines` can only be
-  submitted once, at the Draft -> Authorised transition. Since Shonrei's
-  real process enters actuals AFTER allocation (i.e. after this window
-  has closed), there's no API-level way to reflect real labour hours on
-  a specific line once an assembly is authorised -- only the assembly's
-  overall Quantity (actual yield) stays adjustable post-Authorise, via
-  `adjust_assembly_qty`. This closes off the "actual labour hours"
-  floor-app idea from earlier as not achievable this way -- a labour
-  line's cost is fixed at whatever Authorise's `OrderLines` said (the
-  full run size, see below), full stop, since `OrderLines` can never be
-  touched again.
+  submitted once, at the Draft -> Authorised transition -- once
+  Authorised, a labour line's cost is fixed at whatever `OrderLines`
+  said, full stop. This only rules out *correcting* labour hours after
+  the fact, though -- see the "actual labour hours" item further down,
+  which turns out to still be achievable for the batch flow specifically
+  (Create+Authorise+Complete happen together at report time, before this
+  lock exists yet).
 
 **Re-testing the fix surfaced a real domain distinction, not a bug
 (2026-09-11, WIP110, planned/run size 10 -> actual yield 5):** with
@@ -692,23 +689,41 @@ remaining step is re-running it with the labour-line fix included, then
 swapping `DryRunCin7Client` for a real `Cin7Client` in the
 backorder-target/batch flow -- see "What's dry-run vs. real today" above.
 
-**Possible follow-up (not yet scoped) -- two of three earlier batch-
-completion UI ideas still stand, the third is ruled out:**
-1. **Actual yield override** -- `complete_assembly` already supports
-   this (see above); the floor-app piece is just a quick-add "actual
-   yield" field on batch completion, defaulting to the batch's planned
-   run size.
-2. **Pick-line override** -- letting a batch's `PickLines` (the physical
-   components actually consumed) be adjusted for the rare substitution
-   case, rather than always exactly matching the BOM. Still viable --
-   PickLines is submitted fresh at Complete, no re-Authorise needed.
-3. ~~Actual labour hours per service line~~ -- **ruled out** (see the
-   live findings above): `OrderLines` can only be submitted once, at
-   Authorise, and Shonrei's real process enters actuals after that
-   point. A labour line's cost will always reflect the standard BOM
-   rate, scaled to whatever the assembly's final adjusted Quantity ends
-   up being via `adjust_assembly_qty` -- not a separately entered
-   actual-hours figure.
+**All three earlier batch-completion UI ideas are now wired into
+`cin7_client.py`/`backorder_targets.py`/the Node route -- only the
+floor-app screen itself is left (not yet scoped):**
+1. **Run size / actual yield split** -- `apply_batch_actual` now derives
+   `run_size` as `actual_qty + reject_qty` (both already existing
+   parameters -- `reject_qty` was always written to the DB but silently
+   never affected Cin7 until now) and passes both through to
+   `complete_small_assembly(sku, run_size, actual_yield)`. The floor-app
+   piece is just the existing actual/reject-qty fields already doing
+   their job correctly, no new field needed.
+2. **Pick-line override** -- `complete_small_assembly`/`complete_assembly`
+   take an optional `pick_line_overrides: {ProductCode: TotalQuantity}`,
+   forwarded from the batch-actuals HTTP body all the way through
+   (Node -> refresh-service -> `apply_batch_actual` -> Cin7). Works right
+   up to Complete since `PickLines` is submitted fresh every time, no
+   Authorise-style lock. Floor-app piece: an optional per-component
+   quantity field (a dropdown of the batch's own components, "adjust
+   this one" per the earlier "drop-down on app" idea).
+3. **Actual labour hours per service line** -- turns out this is NOT
+   ruled out after all, just narrower than first assumed: it only works
+   at the SAME moment as Authorise (`OrderLines` can never be
+   resubmitted once Authorised, confirmed live). Since
+   `complete_small_assembly` does Create+Authorise+Complete all at once,
+   at batch-report time, Authorise hasn't happened yet when a batch's
+   actuals come in -- so there's no "already locked" problem for this
+   flow specifically. Wired as `labour_hours_overrides: {name-substring:
+   actual hours}`, same path as pick-line overrides. (A general
+   Create-now-Authorise-days-later-Complete-even-later path, like
+   `orchestrator.py`'s, genuinely couldn't do this -- that's what the
+   original "ruled out" finding was about.)
+
+None of this is exposed in the floor app yet -- `production/floor-app/`
+has no fields for either override, and the batch-actuals form only ever
+sends `actual_qty`/`reject_qty` today. Building that UI (a "these need
+altering" dropdown per the original ask) is the remaining piece.
 
 Actuals in Shonrei's real process are always entered after allocation,
 which lines up with where `apply_batch_actual` (`backorder_targets.py`)

@@ -133,7 +133,10 @@ router.get('/batches/by-code/:batchCode', requireFloorSecret, asyncHandler(async
 // small Cin7 FG assembly for the actual quantity and decrements the
 // parent target -- see refresh-service/backorder_targets.py.
 router.post('/batch-actuals', requireFloorSecret, asyncHandler(async (req, res) => {
-  const { batch_id, actual_qty, reject_qty, reported_via, reported_by } = req.body || {};
+  const {
+    batch_id, actual_qty, reject_qty, reported_via, reported_by,
+    labour_hours_overrides, pick_line_overrides,
+  } = req.body || {};
   if (!batch_id || typeof actual_qty !== 'number' || actual_qty < 0) {
     throw new ApiError(400, 'batch_id and a non-negative numeric actual_qty are required');
   }
@@ -141,9 +144,15 @@ router.post('/batch-actuals', requireFloorSecret, asyncHandler(async (req, res) 
     throw new ApiError(400, "reported_via must be 'barcode' or 'manual'");
   }
 
+  // labour_hours_overrides/pick_line_overrides are optional, for a future
+  // floor-app quick-add UI (see cin7_client.complete_small_assembly's
+  // docstring) -- no floor-app screen sends these yet, just forwarded
+  // through untouched when present.
   const data = await callRefreshService(`/production/batches/${batch_id}/actual`, {
     actual_qty, reject_qty: reject_qty ?? 0,
     reported_via: reported_via || 'manual', reported_by: reported_by || null,
+    labour_hours_overrides: labour_hours_overrides || undefined,
+    pick_line_overrides: pick_line_overrides || undefined,
   });
   res.status(201).json(data);
 }));
