@@ -88,10 +88,29 @@ def main():
         client._raise_for_status_with_body(resp)  # noqa: SLF001
         draft = resp.json()
         print(f'Fetched draft: {json.dumps(draft, indent=2, default=str)}')
+        # GET /stockadjustment does NOT return a "Lines" key -- it's
+        # "NewStockLines"/"ExistingStockLines" on the read side, but the
+        # POST/PUT bodies both expect "Lines". Confirmed live: a first
+        # attempt resending draft.get("Lines") sent Lines: null and Cin7
+        # correctly rejected it as "not provided". Also note each line's
+        # own resolved "Location"/"LocationID" here (not "Bin"/"BinID")
+        # is the real per-bin identity Cin7 assigned from the Bin value
+        # we posted -- that's what this whole probe is confirming.
+        raw_lines = draft.get('NewStockLines') or []
+        lines_for_put = [{
+            'SKU': l.get('SKU'),
+            'ProductID': l.get('ProductID'),
+            'ProductName': l.get('ProductName'),
+            'Location': l.get('Location'),
+            'LocationID': l.get('LocationID'),
+            'Quantity': l.get('Quantity'),
+            'UnitCost': l.get('UnitCost'),
+            'Comments': l.get('Comments') or '',
+        } for l in raw_lines]
         complete_payload = {
             "TaskID": existing_task_id,
             "EffectiveDate": draft.get("EffectiveDate"),
-            "Lines": draft.get("Lines"),
+            "Lines": lines_for_put,
             "Reference": draft.get("Reference") or "",
             "Status": "COMPLETED",
         }
