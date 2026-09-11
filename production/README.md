@@ -613,7 +613,19 @@ cost** -- without one it authorises fine but costs nothing. Shonrei uses
 the "General customers" tier, which is `PriceTier: 1` (also visible on
 the raw BOM data itself -- WIPMT20T's labour lines already carry
 `"PriceTier": 1`). `_component_lines_for_build` now passes this straight
-through from the BOM rather than omitting it.
+through from the BOM rather than omitting it. Confirmed working live
+(2026-09-11): the labour cost doesn't show on the assembly's own
+order-line display, but it does correctly roll into the finished
+product's item cost -- the per-line display gap looks like a Cin7 UI
+quirk on that column rather than the calculation being wrong, and the
+calculation is what actually matters financially. Not chased further.
+
+**This closes out the assembly write-side confirmation loop**: a full
+Create -> Authorise -> Complete run now works live, with both physical
+components and correctly-costed labour lines. `close_assembly` (cancel/
+void) and `adjust_assembly_qty` (in-place quantity edit) are still
+unconfirmed live -- see "Still open" above -- and `adjust_stock_on_hand`
+(stock adjustment) hasn't been live-tested at all yet.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
