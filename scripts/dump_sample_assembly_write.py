@@ -100,6 +100,8 @@ def main():
     print(f"BillOfMaterial={p.get('BillOfMaterial')}  DefaultLocation={p.get('DefaultLocation')!r}")
     for line in p.get('BillOfMaterialsProducts') or []:
         print(f"  consumes {line.get('Quantity')} x {line.get('ProductCode')} ({line.get('Name')}) per unit")
+    for line in p.get('BillOfMaterialsServices') or []:
+        print(f"  labour: {line.get('Quantity')} x {line.get('Name')} per unit")
     if not confirm('This will really create/authorise/complete a Cin7 assembly and consume real component stock.'):
         save_and_exit()
 
@@ -129,6 +131,7 @@ def main():
             'ProductID': line['ProductID'], 'ProductCode': line['ProductCode'], 'Name': line['Name'],
             'Quantity': line['Quantity'], 'TotalQuantity': line['TotalQuantity'],
             'WastagePercent': line['WastagePercent'], 'WastageQuantity': line['WastageQuantity'],
+            'ExpenseAccount': line['ExpenseAccount'],
         }
         for line in component_lines
     ]
@@ -174,7 +177,10 @@ def main():
 def build_component_lines(product, build_qty):
     """Mirrors cin7_client.py's _component_lines_for_build -- Cin7 won't
     do this for us (see the module docstring), so scale the product's own
-    BillOfMaterialsProducts lines to real totals for this build."""
+    BillOfMaterialsProducts AND BillOfMaterialsServices (labour) lines to
+    real totals for this build. Labour lines aren't required to complete
+    (confirmed live against WIP110, 2026-09-11) but are included so
+    labour cost actually gets allocated to the assembly."""
     lines = []
     for line in product.get('BillOfMaterialsProducts') or []:
         qty_per = line.get('Quantity') or 0
@@ -186,6 +192,19 @@ def build_component_lines(product, build_qty):
             'TotalQuantity': qty_per * build_qty,
             'WastagePercent': line.get('WastagePercent') or 0,
             'WastageQuantity': line.get('WastageQuantity') or 0,
+            'ExpenseAccount': '',
+        })
+    for line in product.get('BillOfMaterialsServices') or []:
+        qty_per = line.get('Quantity') or 0
+        lines.append({
+            'ProductID': line.get('ComponentProductID'),
+            'ProductCode': '',
+            'Name': line.get('Name'),
+            'Quantity': qty_per,
+            'TotalQuantity': qty_per * build_qty,
+            'WastagePercent': 0,
+            'WastageQuantity': 0,
+            'ExpenseAccount': line.get('ExpenseAccount') or '',
         })
     return lines
 

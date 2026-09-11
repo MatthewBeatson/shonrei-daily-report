@@ -589,15 +589,32 @@ alone:
   one call (see `allocate_assembly`'s docstring for why that stage is
   deliberately unwired).
 
+**A full Create -> Authorise -> Complete run succeeded live against
+WIP110 (2026-09-11)** -- the whole assembly write path works end to end.
+One gap found on that first successful run: it only included
+`BillOfMaterialsProducts` (physical components), not
+`BillOfMaterialsServices` (labour lines, e.g. "LABOUR - Gluing Room" seen
+earlier on WIPMT20T) -- Cin7 didn't require them to complete, but
+omitting them means labour cost never gets allocated to the assembly.
+`_component_lines_for_build` now includes both.
+
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through
 Create -> Authorise -> Complete (with a confirmation prompt before each
 write); stock adjustment and the Void/cancel test are deliberately not
 in it this round (voiding is being done manually in Cin7's UI instead).
-Once a full Create -> Authorise -> Complete run succeeds live, this list
--- along with `DryRunCin7Client`
-still being what actually runs today -- gets the same "confirmed live"
-treatment the read side got above.
+Now that Create -> Authorise -> Complete has succeeded live, the
+remaining step is re-running it with the labour-line fix included, then
+swapping `DryRunCin7Client` for a real `Cin7Client` in the
+backorder-target/batch flow -- see "What's dry-run vs. real today" above.
+
+**Possible follow-up (not yet scoped):** a quick-add field on batch
+completion (floor app) for actual labour hours, since Cin7's BOM-derived
+labour quantity is only the standard/planned figure, not what actually
+happened on the floor. Actuals in Shonrei's real process are always
+entered after allocation, which lines up with where `apply_batch_actual`
+(`backorder_targets.py`) already sits -- the natural place to add an
+optional labour override before it reaches `complete_small_assembly`.
 
 ## Still not built
 

@@ -243,16 +243,24 @@ PRODUCT_WITH_BOM = {
         "BillOfMaterialsProducts": [
             {"ComponentProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "WastagePercent": 0, "WastageQuantity": 0},
         ],
+        "BillOfMaterialsServices": [
+            {"ComponentProductID": "labour-guid", "Name": "LABOUR - Gluing Room", "Quantity": 1.5, "ExpenseAccount": "222/00A", "PriceTier": 1},
+        ],
     }],
 }
 
 # What authorise_assembly/complete_assembly should build from PRODUCT_WITH_BOM
-# at build qty 5.0 (2.0 per unit * 5.0 = 10.0 total).
+# at build qty 5.0 (2.0/1.5 per unit * 5.0 = 10.0/7.5 total) -- both the
+# physical component AND the labour line (Cin7 doesn't require the labour
+# line to complete, confirmed live against WIP110, but omitting it means
+# labour cost never gets allocated -- see _component_lines_for_build).
 EXPECTED_ORDER_LINES = [
-    {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0, "WastagePercent": 0, "WastageQuantity": 0},
+    {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 2.0, "TotalQuantity": 10.0, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": ""},
+    {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 1.5, "TotalQuantity": 7.5, "WastagePercent": 0, "WastageQuantity": 0, "ExpenseAccount": "222/00A"},
 ]
 EXPECTED_PICK_LINES = [
     {"ProductID": "raw-guid", "ProductCode": "RAW-CARDBOARD", "Name": "Cardboard", "Quantity": 10.0, "Unit": ""},
+    {"ProductID": "labour-guid", "ProductCode": "", "Name": "LABOUR - Gluing Room", "Quantity": 7.5, "Unit": ""},
 ]
 
 AUTHORISE_RESPONSE = {"TaskID": "task-1", "Status": "AUTHORISED", "OrderLines": EXPECTED_ORDER_LINES}

@@ -88,6 +88,17 @@ being corrected as real 400s come back:
     show the Complete call (POST /finishedGoods/pick) carrying the same
     two fields plus CompletionDate/WIPDate, so complete_assembly sends
     them too, pre-emptively, rather than wait for the same 400 twice.
+  - OrderLines/PickLines don't auto-populate from the BOM at Create --
+    confirmed by a 400 ("Should be at least one order line.") and by
+    Cin7's own "New Assembly" screen, which has a manual "Load BOM"
+    button for exactly this. _component_lines_for_build now builds these
+    explicitly.
+  - A full Create -> Authorise -> Complete run against WIP110 succeeded
+    live (2026-09-11) with only BillOfMaterialsProducts lines --
+    BillOfMaterialsServices (labour) lines weren't included in that run.
+    Cin7 didn't require them to complete, but omitting them means labour
+    cost never gets allocated to the assembly -- _component_lines_for_build
+    now includes both.
 
 Still open: whether "ID" and "TaskID" really are the same identifier for
 DELETE (close_assembly/cancel), and whether PUT /finishedGoods can edit
@@ -322,11 +333,22 @@ class Cin7Client:
         empty list 400'd ("Should be at least one order line."). So this
         builds the lines explicitly from the product record instead of
         trusting Cin7 to have already done it.
+
+        Includes BOTH BillOfMaterialsProducts (physical components,
+        same as get_bom) AND BillOfMaterialsServices (labour lines, e.g.
+        "LABOUR - Gluing Room" on WIPMT20T) -- a live Create->Authorise
+        ->Complete run against WIP110 (2026-09-11) succeeded with only
+        the physical-component lines, so Cin7 doesn't *require* labour
+        lines to complete, but omitting them means labour cost never
+        gets allocated to the assembly. Service lines have no ProductCode
+        (Cin7 never returns one for them) and no wastage fields --
+        ProductCode is sent as "" and Wastage*/left at 0 for them, rather
+        than omitted, since every line in one OrderLines/PickLines list
+        needs the same shape.
         """
         product = self._get_product(sku, include_bom=True)
-        raw_lines = product.get("BillOfMaterialsProducts") or []
         lines = []
-        for line in raw_lines:
+        for line in product.get("BillOfMaterialsProducts") or []:
             qty_per = line.get("Quantity") or 0
             lines.append({
                 "ProductID": line.get("ComponentProductID"),
@@ -336,6 +358,19 @@ class Cin7Client:
                 "TotalQuantity": qty_per * build_qty,
                 "WastagePercent": line.get("WastagePercent") or 0,
                 "WastageQuantity": line.get("WastageQuantity") or 0,
+                "ExpenseAccount": "",
+            })
+        for line in product.get("BillOfMaterialsServices") or []:
+            qty_per = line.get("Quantity") or 0
+            lines.append({
+                "ProductID": line.get("ComponentProductID"),
+                "ProductCode": "",
+                "Name": line.get("Name"),
+                "Quantity": qty_per,
+                "TotalQuantity": qty_per * build_qty,
+                "WastagePercent": 0,
+                "WastageQuantity": 0,
+                "ExpenseAccount": line.get("ExpenseAccount") or "",
             })
         return lines
 
