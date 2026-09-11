@@ -325,6 +325,48 @@ async function pushAdjustment(countId, sku) {
   }
 }
 
+// Formal-stocktake support: which Cin7 Stocktake (e.g. "ST-00233") sync
+// tags its adjustments with -- see refresh-service/stocktake.py's module
+// docstring for the full area-based design.
+async function loadActiveStocktakeNumber() {
+  try {
+    const { active_cin7_stocktake_number } = await api('/production/stocktake/active-number');
+    document.getElementById('active-stocktake-input').value = active_cin7_stocktake_number || '';
+    document.getElementById('stocktake-number-status').textContent = active_cin7_stocktake_number
+      ? `Currently syncing against ${active_cin7_stocktake_number}.`
+      : 'No active stocktake number set -- syncing will be blocked until one is saved.';
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
+async function saveStocktakeNumber() {
+  setError('');
+  const value = document.getElementById('active-stocktake-input').value.trim();
+  try {
+    await api('/production/stocktake/active-number', {
+      method: 'POST', body: JSON.stringify({ stocktake_number: value || null }),
+    });
+    setSuccess(value ? `Active stocktake set to ${value}.` : 'Active stocktake number cleared.');
+    await loadActiveStocktakeNumber();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+async function syncStocktakeTotals() {
+  setError('');
+  try {
+    const { synced } = await api('/production/stocktake/sync', { method: 'POST', body: JSON.stringify({}) });
+    setSuccess(synced.length
+      ? `Synced ${synced.length} SKU total(s) to Cin7.`
+      : 'Nothing to sync -- no counts are currently "recorded".');
+    await loadStocktake();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
 // -- Warehouse locations -----------------------------------------------
 
 async function loadLocations() {
@@ -446,6 +488,8 @@ async function loadPutawayScans() {
 document.getElementById('refresh-targets-btn').addEventListener('click', loadTargets);
 document.getElementById('refresh-batches-btn').addEventListener('click', loadBatches);
 document.getElementById('refresh-stocktake-btn').addEventListener('click', loadStocktake);
+document.getElementById('save-stocktake-number-btn').addEventListener('click', saveStocktakeNumber);
+document.getElementById('sync-stocktake-btn').addEventListener('click', syncStocktakeTotals);
 document.getElementById('refresh-locations-btn').addEventListener('click', loadLocations);
 document.getElementById('locations-filter').addEventListener('change', loadLocations);
 document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
@@ -490,6 +534,7 @@ function enterAdmin() {
   loadTargets();
   loadBatches();
   loadStocktake();
+  loadActiveStocktakeNumber();
   loadLocations();
   loadPutawayScans();
 }

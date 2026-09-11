@@ -73,6 +73,12 @@ class DryRunCin7Client:
         self._log('get_stock_on_hand', sku=sku, returned=fake_qty)
         return fake_qty
 
-    def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
-        self._log('adjust_stock_on_hand', sku=sku, new_qty=new_qty, note=note)
+    def adjust_stock_on_hand(
+        self, sku: str, new_qty: float, note: str | None = None, *, stocktake_number: str | None = None,
+    ) -> str:
+        self._log('adjust_stock_on_hand', sku=sku, new_qty=new_qty, note=note, stocktake_number=stocktake_number)
         return f'DRYRUN-ADJ-{next(_counter):06d}'
+
+    def get_open_stock_adjustments(self) -> list:
+        self._log('get_open_stock_adjustments')
+        return []

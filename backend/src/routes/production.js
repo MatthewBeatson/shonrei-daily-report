@@ -320,6 +320,35 @@ router.post('/stocktake/counts/:countId/adjust', requireProductionEdit, asyncHan
   res.status(200).json(data);
 }));
 
+// Formal-stocktake support: which Cin7 Stocktake (e.g. "ST-00233")
+// sync_stocktake_totals tags its adjustments with -- see refresh-service/
+// stocktake.py's module docstring for the full area-based design.
+// Reachable from the floor too (not just admin) -- staff counting need
+// to see which stocktake they're counting against, same reasoning as
+// batch labels being floor-reachable.
+router.get('/stocktake/active-number', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query('select active_cin7_stocktake_number from stocktake.settings where id = true');
+  res.json({ active_cin7_stocktake_number: rows[0]?.active_cin7_stocktake_number || null });
+}));
+
+router.post('/stocktake/active-number', requireProductionEdit, asyncHandler(async (req, res) => {
+  const { stocktake_number } = req.body || {};
+  const data = await callRefreshService('/stocktake/active-number', {
+    stocktake_number: stocktake_number || null,
+    updated_by: req.productionUser?.email || null,
+  });
+  res.status(200).json(data);
+}));
+
+// Admin: aggregate every 'recorded' count by SKU (across whichever areas
+// it was counted in) and push one adjustment per SKU, tagged with the
+// active stocktake number. 409s if none is set. Safe to call repeatedly
+// through a stocktake cycle as areas finish counting.
+router.post('/stocktake/sync', requireProductionEdit, asyncHandler(async (req, res) => {
+  const data = await callRefreshService('/stocktake/sync', {});
+  res.status(200).json(data);
+}));
+
 // -- Warehouse locations / putaway -- the "product placed anywhere" fix,
 //    see production/README.md "Labels & warehouse locations". ---------
 

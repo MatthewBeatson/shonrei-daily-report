@@ -750,7 +750,9 @@ class Cin7Client:
         get_availability's docstring."""
         return self._get_availability_row(sku)["OnHand"]
 
-    def adjust_stock_on_hand(self, sku: str, new_qty: float, note: str | None = None) -> str:
+    def adjust_stock_on_hand(
+        self, sku: str, new_qty: float, note: str | None = None, *, stocktake_number: str | None = None,
+    ) -> str:
         """Push a physical count to Cin7 as a stock adjustment, setting
         on-hand to `new_qty`. Returns Cin7's TaskID. Deliberately a
         separate, explicit call from recording a count -- see
@@ -773,6 +775,15 @@ class Cin7Client:
         mandatory in Cin7's docs at all. Uses the product's own
         AverageCost (a real field on the product record, not guessed)
         rather than inventing a number.
+
+        `stocktake_number` ties this adjustment to a formal Cin7
+        Stocktake (e.g. "ST-00233", admin-entered -- see
+        stocktake.sync_stocktake_totals) via the documented
+        `StocktakeNumber` field. This field itself is real -- it's in
+        Cin7's own worked stock-adjustment example -- but sending it has
+        NOT been live-tested yet (the one live run so far was a plain
+        no-op with no stocktake_number). Confirm before trusting this
+        for a real stocktake cycle.
         """
         product = self._get_product(sku)
         line = {
@@ -785,18 +796,49 @@ class Cin7Client:
             "Comments": note or "",
         }
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
-        draft = self._post_json("stockadjustment", {
+        payload = {
             "EffectiveDate": now,
             "Lines": [line],
             "Reference": note or "",
             "Status": "DRAFT",
-        })
+        }
+        if stocktake_number:
+            payload["StocktakeNumber"] = stocktake_number
+        draft = self._post_json("stockadjustment", payload)
         task_id = draft["TaskID"]
-        self._put_json("stockadjustment", {
+        complete_payload = {
             "TaskID": task_id,
             "EffectiveDate": draft.get("EffectiveDate") or now,
             "Lines": draft.get("Lines") or [line],
             "Reference": note or "",
             "Status": "COMPLETED",
-        })
+        }
+        if stocktake_number:
+            complete_payload["StocktakeNumber"] = draft.get("StocktakeNumber") or stocktake_number
+        self._put_json("stockadjustment", complete_payload)
         return task_id
+
+    def get_open_stock_adjustments(self) -> list[dict]:
+        """Lists ad-hoc stock adjustments still open (DRAFT), via the
+        documented GET /stockadjustmentList?Status=DRAFT. For the
+        floor/admin "pick an existing open adjustment, or create a new
+        one" flow (see stocktake.py's module docstring) -- NOT used for
+        the formal Stocktake path, which always has exactly one Cin7-
+        native Stocktake in progress, entered by admin, not picked from
+        a list.
+
+        Returns Cin7's own list-row shape (TaskID, Account, EffectiveDate,
+        Reference, Status, StocktakeNumber) -- no `sku` filter here: the
+        documented stockadjustmentList response has no Lines/SKU field at
+        all, only these header fields, so matching by SKU would need a
+        separate GET /stockadjustment?TaskID=<id> per candidate. Not done
+        here to avoid guessing that's worth the extra round trips before
+        it's actually needed -- add it once the picker UI shows this is
+        the missing piece, not before.
+        """
+        resp = requests.get(
+            f"{CIN7_BASE_URL}/stockadjustmentList",
+            headers=self._headers(), params={"Status": "DRAFT", "Limit": 100}, timeout=60,
+        )
+        self._raise_for_status_with_body(resp)
+        return resp.json().get("StockAdjustmentList") or []

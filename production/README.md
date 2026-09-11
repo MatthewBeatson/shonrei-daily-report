@@ -271,6 +271,59 @@ the admin flow (`DryRunCin7Client` logged both the on-hand read and the
 adjustment write), and confirmed a duplicate push on an already-`adjusted`
 count correctly returns 409.
 
+### Formal area-based stocktake, confirmed design (2026-09-11)
+
+The above ("ad-hoc") flow stays -- it's still the right tool for a
+one-off correction outside a scheduled count. Alongside it, Shonrei's
+real periodic stocktake process is a formal Cin7-native event:
+
+- Admin starts a Stocktake manually in **Cin7's own UI** (e.g.
+  `ST-00233`), which locks the whole account against other inventory
+  movements while it's open -- this app never creates or closes that
+  event, only syncs counts into it.
+- Staff count **by physical area**, not just by SKU -- Shonrei's
+  traditional area names (Stockroom - Main, Stockroom - Pads, Pads &
+  Linings Upstairs, Alleyways/Finishing Area, etc.) map straight onto
+  `warehouse.locations` (the same table put-away already uses -- no new
+  hierarchy needed). On the floor app's Stocktake tab, staff now **scan
+  the area's own location barcode** first (not a typed/picked area
+  name) to set the counting context, then scan SKUs within it as many
+  times as needed -- the same barcode putaway already prints and
+  scans. `stocktake.counts.location` (already existed, migration 009)
+  stores that scanned code, so the same SKU naturally gets one row per
+  area it was counted in.
+- **Sync** (`stocktake.sync_stocktake_totals`, admin-triggered, safe to
+  run repeatedly through the cycle) sums a SKU's counts across every
+  area (`stocktake.aggregate_recorded_counts_by_sku`, pure, unit
+  tested) and pushes ONE adjustment per SKU to Cin7, tagged with the
+  active Stocktake number via the documented `StocktakeNumber` field on
+  `adjust_stock_on_hand`. Only still-`recorded` counts are included, so
+  re-running sync as more areas finish never double-counts what's
+  already gone through.
+- **Active Stocktake number** (`stocktake.settings`, migration 013) is
+  admin-entered, not looked up automatically -- Cin7 doesn't expose (or
+  at least this hasn't confirmed) a "what's the current in-progress
+  stocktake" endpoint, and admin already knows the number from starting
+  it in Cin7's own UI. Can be changed at any point mid-cycle and takes
+  effect on the next sync.
+- Admin closes the Cin7 Stocktake itself, in Cin7's UI, once every area
+  has been counted and synced -- outside this app's scope, same as
+  starting it.
+
+**Still open, needs a live test:** whether Cin7 actually accepts a Stock
+Adjustment tagged with `StocktakeNumber` the way `adjust_stock_on_hand`
+now sends it -- the field itself is real (Cin7's own worked example
+includes it), but the one live stock-adjustment test run so far
+(2026-09-11) was a plain no-op with no `stocktake_number` passed. Next
+diagnostic-script step, same pattern as the assembly write-side work.
+
+`cin7_client.get_open_stock_adjustments()` is also wired (the
+documented `GET /stockadjustmentList?Status=DRAFT`) for a possible
+future "pick an existing open ad-hoc adjustment instead of always
+creating a new one" flow -- not wired into `apply_adjustment` yet
+(whether Cin7 accepts appending more `Lines` to an already-`DRAFT`
+adjustment via a second `PUT` is unconfirmed, same open question).
+
 ## Labels & warehouse locations
 
 Shonrei's real layout: fixed shelves/areas for RM (raw material), SA

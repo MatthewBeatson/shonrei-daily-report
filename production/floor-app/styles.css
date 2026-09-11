@@ -179,6 +179,34 @@ header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
   text-align: center;
   padding: 8px;
 }
+.stocktake-banner {
+  font-size: 0.85rem;
+  color: var(--gray);
+  text-align: center;
+  padding: 6px 12px;
+}
+.stocktake-banner:empty { display: none; }
+.current-area-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card-bg);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+.current-area-banner button {
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--blue);
+  font-size: 0.85rem;
+}
 .run-list-heading {
   text-align: center;
   color: var(--gray);

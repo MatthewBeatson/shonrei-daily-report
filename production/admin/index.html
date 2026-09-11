@@ -115,8 +115,21 @@
           the ones you trust as a Cin7 stock adjustment.
         </p>
         <div class="admin-toolbar">
+          <label for="active-stocktake-input" class="sub">Active Cin7 Stocktake</label>
+          <input type="text" id="active-stocktake-input" placeholder="e.g. ST-00233" style="max-width:160px">
+          <button class="btn-secondary" id="save-stocktake-number-btn">Save</button>
+          <button class="btn-primary" id="sync-stocktake-btn">Sync totals to Cin7</button>
           <button class="btn-primary" id="refresh-stocktake-btn">Refresh</button>
         </div>
+        <p class="sub" id="stocktake-number-status"></p>
+        <p class="sub">
+          "Sync totals" sums every still-<strong>recorded</strong> count per
+          SKU across whichever areas it was counted in, and pushes one
+          adjustment per SKU tagged with the Cin7 Stocktake number above.
+          Safe to run more than once as areas finish counting. Only for
+          the formal area-based stocktake -- the per-row "Push adjustment"
+          button below is still the ad-hoc, single-SKU path.
+        </p>
         <table class="overrides-table" id="stocktake-table">
           <thead>
             <tr><th>SKU</th><th>Location</th><th>Counted</th><th>Cin7 on hand</th><th>Variance</th><th>Status</th><th>Counted</th><th></th></tr>

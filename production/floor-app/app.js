@@ -32,7 +32,7 @@ function showTab(name) {
     tabBtns[key].classList.toggle('active', key === name);
   }
   if (name === 'batches') batchCodeInput.focus();
-  if (name === 'stocktake') document.getElementById('stSkuInput').focus();
+  if (name === 'stocktake') document.getElementById(currentStArea ? 'stSkuInput' : 'stAreaInput').focus();
   if (name === 'putaway') document.getElementById('paSkuInput').focus();
 }
 tabBtns.batches.addEventListener('click', () => showTab('batches'));
@@ -298,7 +298,13 @@ function escapeHtml(s) {
 let currentStSku = null;
 let stQty = 0;
 let stViaCode = false;
+let currentStArea = null; // the scanned location code counting is currently against
 
+const stAreaStep = document.getElementById('stAreaStep');
+const stAreaInput = document.getElementById('stAreaInput');
+const stAreaError = document.getElementById('stAreaError');
+const stCurrentAreaBanner = document.getElementById('stCurrentAreaBanner');
+const stStocktakeBanner = document.getElementById('stStocktakeBanner');
 const stScanStep = document.getElementById('stScanStep');
 const stCountStep = document.getElementById('stCountStep');
 const stDoneStep = document.getElementById('stDoneStep');
@@ -306,6 +312,13 @@ const stCountAgainBtn = document.getElementById('stCountAgainBtn');
 const stSkuInput = document.getElementById('stSkuInput');
 const stScanError = document.getElementById('stScanError');
 
+stAreaInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    setStArea(stAreaInput.value.trim());
+  }
+});
+document.getElementById('stChangeAreaBtn').addEventListener('click', clearStArea);
 document.getElementById('stLookupBtn').addEventListener('click', () => openStocktakeSku(stSkuInput.value.trim(), false));
 stSkuInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -318,6 +331,50 @@ document.getElementById('stQtyUp').addEventListener('click', () => adjustStQty(1
 document.getElementById('stSubmitBtn').addEventListener('click', submitStocktakeCount);
 stCountAgainBtn.addEventListener('click', resetToStScan);
 document.getElementById('stDoneAgainBtn').addEventListener('click', resetToStScan);
+
+loadStocktakeBanner();
+
+// Informational only -- counting never needs a Cin7 Stocktake number set,
+// only syncing (admin-side) does. Just lets staff see what they're
+// counting against, or that nothing's set yet.
+async function loadStocktakeBanner() {
+  try {
+    const { active_cin7_stocktake_number } = await apiFetch('/production/stocktake/active-number');
+    stStocktakeBanner.textContent = active_cin7_stocktake_number
+      ? `Counting against Cin7 Stocktake ${active_cin7_stocktake_number}`
+      : 'No active Cin7 Stocktake number set yet (ask admin) -- counts still record fine either way.';
+  } catch (err) {
+    stStocktakeBanner.textContent = '';
+  }
+}
+
+// Scanning the area's own location barcode sets the counting context for
+// every SKU counted next -- same barcode putaway already uses, not a
+// typed/picked area name (production/README.md "Labels & warehouse
+// locations"). Stays set until "Change area".
+function setStArea(code) {
+  stAreaError.hidden = true;
+  if (!code) return;
+  currentStArea = code;
+  document.getElementById('stCurrentAreaCode').textContent = code;
+  stAreaStep.hidden = true;
+  stCurrentAreaBanner.hidden = false;
+  stScanStep.hidden = false;
+  stAreaInput.value = '';
+  stSkuInput.focus();
+}
+
+function clearStArea() {
+  currentStArea = null;
+  stCurrentAreaBanner.hidden = true;
+  stScanStep.hidden = true;
+  stCountStep.hidden = true;
+  stDoneStep.hidden = true;
+  stCountAgainBtn.hidden = true;
+  stAreaStep.hidden = false;
+  stAreaInput.value = '';
+  stAreaInput.focus();
+}
 
 async function openStocktakeSku(sku, viaCode) {
   stScanError.hidden = true;
@@ -364,7 +421,6 @@ function renderStQty() {
 async function submitStocktakeCount() {
   const btn = document.getElementById('stSubmitBtn');
   btn.disabled = true;
-  const location = document.getElementById('stLocationInput').value.trim();
 
   try {
     const data = await apiFetch('/production/stocktake/counts', {
@@ -372,11 +428,11 @@ async function submitStocktakeCount() {
       body: JSON.stringify({
         sku: currentStSku,
         counted_qty: stQty,
-        location: location || null,
+        location: currentStArea,
         reported_via: stViaCode ? 'barcode' : 'manual',
       }),
     });
-    let msg = `Counted ${stQty} of ${currentStSku}.`;
+    let msg = `Counted ${stQty} of ${currentStSku} in ${currentStArea}.`;
     if (data.variance != null) {
       msg += data.variance === 0
         ? ' Matches Cin7.'
@@ -392,13 +448,15 @@ async function submitStocktakeCount() {
   }
 }
 
+// Back to scanning a SKU within the SAME area -- area only clears via
+// "Change area", not after every count, since one area usually has many
+// SKUs to count in a row.
 function resetToStScan() {
   currentStSku = null;
   stScanStep.hidden = false;
   stCountStep.hidden = true;
   stDoneStep.hidden = true;
   stCountAgainBtn.hidden = true;
-  document.getElementById('stLocationInput').value = '';
   stScanError.hidden = true;
   stSkuInput.value = '';
   stSkuInput.focus();

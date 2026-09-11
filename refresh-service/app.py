@@ -29,7 +29,10 @@ from production_plan import ProductionPlanError, run_production_plan
 from backorder_targets import sync_targets, apply_batch_actual
 from batch_staging import stage_batches_for_target
 from dry_run_cin7 import DryRunCin7Client
-from stocktake import StocktakeError, record_count, apply_adjustment
+from stocktake import (
+    StocktakeError, record_count, apply_adjustment,
+    get_active_stocktake_number, set_active_stocktake_number, sync_stocktake_totals,
+)
 from warehouse import WarehouseError, record_putaway_scan, set_home_location
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 
@@ -323,6 +326,60 @@ def stocktake_apply_adjustment(count_id):
         conn.close()
 
     return jsonify(result), 200
+
+
+@app.get('/stocktake/active-number')
+def stocktake_get_active_number():
+    """Which Cin7 Stocktake (e.g. "ST-00233") sync_stocktake_totals
+    tags its adjustments with -- admin-entered, since admin starts the
+    real Stocktake manually in Cin7's own UI, not from this app."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    conn = get_conn()
+    try:
+        number = get_active_stocktake_number(conn)
+    finally:
+        conn.close()
+    return jsonify({'active_cin7_stocktake_number': number})
+
+
+@app.post('/stocktake/active-number')
+def stocktake_set_active_number():
+    """Body: {"stocktake_number", "updated_by"}. Admin can set/clear/
+    replace this at any point during a stocktake cycle."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    conn = get_conn()
+    try:
+        result = set_active_stocktake_number(
+            conn, payload.get('stocktake_number') or None, payload.get('updated_by'),
+        )
+    finally:
+        conn.close()
+    return jsonify(result), 200
+
+
+@app.post('/stocktake/sync')
+def stocktake_sync():
+    """Aggregates every currently-'recorded' count by SKU (across
+    whichever areas it was counted in) and pushes one adjustment per SKU
+    to Cin7, tagged with the active Stocktake number -- 409s if none is
+    set. Safe to call repeatedly through a stocktake cycle. See
+    stocktake.sync_stocktake_totals.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    conn = get_conn()
+    try:
+        try:
+            results = sync_stocktake_totals(conn, DryRunCin7Client(conn))
+        except StocktakeError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 409
+    finally:
+        conn.close()
+    return jsonify({'synced': results}), 200
 
 
 @app.post('/warehouse/putaway-scans')

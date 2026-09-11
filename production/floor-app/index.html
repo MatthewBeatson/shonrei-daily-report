@@ -96,10 +96,34 @@
         <button class="scan-again" id="stCountAgainBtn" hidden>Count another</button>
       </div>
 
+      <!-- Which Cin7 Stocktake counts are (eventually) synced against --
+           read-only here, admin sets/changes it. Counting itself never
+           needs this set -- only sync does -- so this is informational,
+           not a blocker. -->
+      <div id="stStocktakeBanner" class="stocktake-banner"></div>
+
+      <!-- Step 0: which physical area is being counted -- scan the same
+           location barcode used for put-away (production/README.md
+           "Labels & warehouse locations"), not a typed/picked area name.
+           Stays set across multiple SKU counts until "Change area" is
+           used -- staff scan once per area, then count many SKUs in it. -->
+      <section class="scan-card" id="stAreaStep">
+        <div class="scan-input-row">
+          <label for="stAreaInput">Scan the area's location barcode</label>
+          <input type="text" id="stAreaInput" inputmode="text" autocomplete="off"
+                 autocapitalize="characters" placeholder="e.g. STOCKROOM-MAIN">
+        </div>
+        <div id="stAreaError" class="scan-error" hidden></div>
+      </section>
+      <div class="current-area-banner" id="stCurrentAreaBanner" hidden>
+        Counting area: <strong id="stCurrentAreaCode"></strong>
+        <button id="stChangeAreaBtn">Change area</button>
+      </div>
+
       <!-- Step 1: barcode scan or manual SKU entry -- any SKU, any time,
            same rolling-log workflow the old Google Sheet + AppSheet setup
            used (not a "session" you open and close). -->
-      <section class="scan-card" id="stScanStep">
+      <section class="scan-card" id="stScanStep" hidden>
         <div class="scan-input-row">
           <label for="stSkuInput">Scan or enter SKU</label>
           <input type="text" id="stSkuInput" inputmode="text" autocomplete="off"
@@ -123,11 +147,6 @@
             <span class="value" id="stQtyValue">0</span>
             <button id="stQtyUp" aria-label="increase">+</button>
           </div>
-        </div>
-
-        <div class="scan-input-row">
-          <label for="stLocationInput">Location (optional)</label>
-          <input type="text" id="stLocationInput" autocomplete="off" placeholder="e.g. Warehouse A">
         </div>
 
         <button class="confirm-btn as-planned" id="stSubmitBtn">

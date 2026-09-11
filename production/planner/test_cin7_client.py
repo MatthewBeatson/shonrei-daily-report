@@ -716,6 +716,59 @@ class AdjustStockOnHandTests(unittest.TestCase):
         self.assertEqual(put_kwargs['json']['TaskID'], 'adj-task-1')
         self.assertEqual(put_kwargs['json']['Status'], 'COMPLETED')
 
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_stocktake_number_included_on_both_draft_and_complete_when_given(self, mock_get, mock_post, mock_put):
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        draft_response = {
+            "TaskID": "adj-task-1", "Status": "DRAFT", "StocktakeNumber": "ST-00233",
+            "Lines": [{"SKU": "FG-ASSEMBLED", "ProductID": "product-guid-1", "Quantity": 55.0}],
+        }
+        mock_post.return_value = _mock_write_response(draft_response)
+        mock_put.return_value = _mock_write_response({**draft_response, "Status": "COMPLETED"})
+
+        client = Cin7Client(account_id='x', api_key='y')
+        client.adjust_stock_on_hand('FG-ASSEMBLED', 55.0, stocktake_number='ST-00233')
+
+        self.assertEqual(mock_post.call_args[1]['json']['StocktakeNumber'], 'ST-00233')
+        self.assertEqual(mock_put.call_args[1]['json']['StocktakeNumber'], 'ST-00233')
+
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_no_stocktake_number_field_when_not_given(self, mock_get, mock_post, mock_put):
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        draft_response = {"TaskID": "adj-task-1", "Status": "DRAFT", "Lines": []}
+        mock_post.return_value = _mock_write_response(draft_response)
+        mock_put.return_value = _mock_write_response({**draft_response, "Status": "COMPLETED"})
+
+        client = Cin7Client(account_id='x', api_key='y')
+        client.adjust_stock_on_hand('FG-ASSEMBLED', 55.0)
+
+        self.assertNotIn('StocktakeNumber', mock_post.call_args[1]['json'])
+        self.assertNotIn('StocktakeNumber', mock_put.call_args[1]['json'])
+
+
+class GetOpenStockAdjustmentsTests(unittest.TestCase):
+    @patch('cin7_client.requests.get')
+    def test_hits_the_documented_list_endpoint_filtered_to_draft(self, mock_get):
+        mock_get.return_value = _mock_write_response({
+            "Page": 1, "Total": 2,
+            "StockAdjustmentList": [
+                {"TaskID": "adj-1", "Status": "DRAFT", "Reference": "", "StocktakeNumber": None},
+                {"TaskID": "adj-2", "Status": "DRAFT", "Reference": "shelf recount", "StocktakeNumber": None},
+            ],
+        })
+        client = Cin7Client(account_id='x', api_key='y')
+        rows = client.get_open_stock_adjustments()
+
+        args, kwargs = mock_get.call_args
+        self.assertIn('/stockadjustmentList', args[0])
+        self.assertEqual(kwargs['params']['Status'], 'DRAFT')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['TaskID'], 'adj-1')
+
 
 if __name__ == '__main__':
     unittest.main()
