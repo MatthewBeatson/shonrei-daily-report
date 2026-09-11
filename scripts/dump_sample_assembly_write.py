@@ -41,12 +41,20 @@ Output: printed to stdout and saved to sample_assembly_write_dump.json
 from __future__ import annotations
 import json
 import sys
+from datetime import datetime, timezone
 
 import keyring
 import requests
 
 SERVICE = 'ShonreiDailyReport'
 BASE_URL = 'https://inventory.dearsystems.com/ExternalApi/v2'
+
+# Shonrei's own Cin7 tenant's GL account codes, read off Cin7's manual
+# "New Assembly" screen (Work in progress account / Finished goods
+# account fields) after a live 400 confirmed Create requires them --
+# see cin7_client.py's module docstring, must stay in sync with it.
+FINISHED_GOODS_ACCOUNT = '720'  # "720: Stock on Hand - Cin7 Core"
+WIP_ACCOUNT = '721B'  # "721B: Work in Progress Cin7 Core"
 
 dump = {}
 
@@ -88,15 +96,16 @@ def main():
         save_and_exit()
 
     # -- 2. Create -------------------------------------------------------
-    # Status is required -- Cin7's docs example showed "Status": "..."
-    # (left blank) but a live 400 confirmed it's mandatory; "DRAFT" is the
-    # natural value for a brand new assembly (see cin7_client.py).
+    # Status, Account, and WIPAccount are all required -- confirmed via
+    # two live 400s (see cin7_client.py's module docstring for both).
     created = post_json(headers, 'finishedGoods', {
         'ProductID': p['ID'],
         'ProductCode': assembly_sku,
         'Quantity': qty,
         'Location': p.get('DefaultLocation'),
         'Status': 'DRAFT',
+        'Account': FINISHED_GOODS_ACCOUNT,
+        'WIPAccount': WIP_ACCOUNT,
     }, label='create_assembly')
     task_id = created.get('TaskID')
     if not task_id:
@@ -122,10 +131,15 @@ def main():
     if not confirm(f"About to COMPLETE TaskID={task_id} with {len(pick.get('PickLines') or [])} pick line(s) -- "
                     "this is the step that actually consumes component stock and creates finished-good stock."):
         save_and_exit()
+    now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
     completed = post_json(headers, 'finishedGoods/pick', {
         'TaskID': task_id,
         'Status': 'COMPLETED',
         'PickLines': pick.get('PickLines') or [],
+        'Account': FINISHED_GOODS_ACCOUNT,
+        'WIPAccount': WIP_ACCOUNT,
+        'CompletionDate': now,
+        'WIPDate': now,
     }, label='complete_assembly')
     print(f"Completed: Status={completed.get('Status')}")
 

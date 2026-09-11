@@ -554,11 +554,23 @@ alone:
   rather than guessed) and whether **`ID` and `TaskID`** are really the
   same identifier for the cancel endpoint's `DELETE ?ID=...`.
 
-**Live findings so far (2026-09-11, against MTS57013WH):**
-- Create's documented request example showed `"Status": "..."`
-  (literally left blank) -- a live 400 confirmed it's a required field
-  ("Required attribute 'Status' not provided."). `create_assembly` now
-  sends `Status: "DRAFT"`, the natural value for a brand new assembly.
+**Live findings so far (2026-09-11):**
+- Against MTS57013WH: Create's documented request example showed
+  `"Status": "..."` (literally left blank) -- a live 400 confirmed it's
+  a required field ("Required attribute 'Status' not provided.").
+  `create_assembly` now sends `Status: "DRAFT"`, the natural value for a
+  brand new assembly.
+- Against WIP110: a second live 400 showed Create also requires
+  `Account` and `WIPAccount` -- real GL account codes, not documented as
+  part of the Create body at all. Read directly off Cin7's own manual
+  "New Assembly" screen rather than guessed: WIP Account = `"721B"`
+  ("Work in Progress Cin7 Core"), Finished Goods Account = `"720"`
+  ("Stock on Hand - Cin7 Core", maps to the API's generic `Account`
+  field). Since Cin7's docs show the Complete call
+  (`POST /finishedGoods/pick`) carrying these same two fields (plus
+  `CompletionDate`/`WIPDate`), `complete_assembly` now sends them too,
+  pre-emptively, rather than wait to hit the same 400 a second time. See
+  `CIN7_FINISHED_GOODS_ACCOUNT`/`CIN7_WIP_ACCOUNT` in cin7_client.py.
 
 `scripts/dump_sample_assembly_write.py` is the write-side counterpart to
 `dump_sample_bom.py` -- it walks a real throwaway assembly through

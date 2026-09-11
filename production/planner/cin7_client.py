@@ -68,16 +68,29 @@ assembly a "Finished Good" in the API, not "Assembly"):
         transaction -1) -- adjust_stock_on_hand's `new_qty` is passed
         straight through as that target level.
 
-None of this has been run against a live tenant yet (see
+Live-testing in progress against a real throwaway assembly (see
 scripts/dump_sample_assembly_write.py, the write-side counterpart to
-dump_sample_bom.py) -- these shapes come from Cin7's own docs, same
-confidence level get_bom had before WIPMT20T proved it live. Open
-questions the dump script needs to settle: whether Account/WIPAccount
-are actually required on Create/Authorise/Complete/stock-adjustment
-(omitted here -- Cin7's docs example values look tenant-specific, not
-guessed), whether "ID" and "TaskID" really are the same identifier for
-DELETE, and whether PUT /finishedGoods can edit Quantity on an Authorised
-assembly (adjust_assembly_qty).
+dump_sample_bom.py) -- these shapes started from Cin7's own docs, same
+confidence level get_bom had before WIPMT20T proved it live, and are
+being corrected as real 400s come back:
+  - Create requires Status (docs example showed "Status": "..." left
+    blank) -- confirmed 2026-09-11 against a live 400
+    ("Required attribute 'Status' not provided."). Now sends "DRAFT".
+  - Create ALSO requires Account + WIPAccount (another live 400,
+    2026-09-11, against WIP110) -- these are real GL account codes from
+    Shonrei's own Cin7 tenant, read off Cin7's own manual "New Assembly"
+    screen rather than guessed: WIP Account = "721B" ("Work in Progress
+    Cin7 Core"), Finished Goods Account = "720" ("Stock on Hand - Cin7
+    Core", maps to the API's generic "Account" field). See
+    CIN7_FINISHED_GOODS_ACCOUNT / CIN7_WIP_ACCOUNT below -- tenant-
+    specific constants, not a generic Cin7 default. Cin7's docs also
+    show the Complete call (POST /finishedGoods/pick) carrying the same
+    two fields plus CompletionDate/WIPDate, so complete_assembly sends
+    them too, pre-emptively, rather than wait for the same 400 twice.
+
+Still open: whether "ID" and "TaskID" really are the same identifier for
+DELETE (close_assembly/cancel), and whether PUT /finishedGoods can edit
+Quantity on an Authorised assembly (adjust_assembly_qty).
 """
 from __future__ import annotations
 import os
@@ -87,6 +100,13 @@ from datetime import datetime, timezone
 import requests
 
 CIN7_BASE_URL = "https://inventory.dearsystems.com/ExternalApi/v2"
+
+# Shonrei's own Cin7 tenant's GL account codes for assemblies, read off
+# Cin7's manual "New Assembly" screen (Work in progress account /
+# Finished goods account fields), confirmed 2026-09-11 -- NOT a generic
+# Cin7 default, these are specific to this account's chart of accounts.
+CIN7_FINISHED_GOODS_ACCOUNT = "720"  # "720: Stock on Hand - Cin7 Core"
+CIN7_WIP_ACCOUNT = "721B"  # "721B: Work in Progress Cin7 Core"
 
 
 @dataclass(frozen=True)
@@ -319,12 +339,13 @@ class Cin7Client:
         (single-Cin7-location tenant so far) -- pass it explicitly if
         Shonrei ever runs more than one Cin7 warehouse location.
 
-        Status="DRAFT" is required -- Cin7's own docs example showed
-        "Status": "..." (left blank), but a live 400 confirmed it's
-        mandatory ("Required attribute 'Status' not provided.",
-        2026-09-11). DRAFT is the natural value for a brand new
-        assembly -- not yet proven past this point live (see
-        production/README.md for what's still open).
+        Status="DRAFT", Account, and WIPAccount are all required -- Cin7's
+        own docs example left Status blank ("Status": "...") and didn't
+        list Account/WIPAccount as part of the Create body at all,  but
+        two live 400s confirmed all three are mandatory ("Required
+        attribute 'Status'/'WIPAccount'/'Account' not provided.",
+        2026-09-11). See CIN7_FINISHED_GOODS_ACCOUNT/CIN7_WIP_ACCOUNT's
+        module-level comments for where those two codes came from.
         """
         product = self._get_product(sku)
         body = self._post_json("finishedGoods", {
@@ -333,6 +354,8 @@ class Cin7Client:
             "Quantity": qty,
             "Location": location or product.get("DefaultLocation"),
             "Status": "DRAFT",
+            "Account": CIN7_FINISHED_GOODS_ACCOUNT,
+            "WIPAccount": CIN7_WIP_ACCOUNT,
         })
         return self._assembly_from(body)
 
@@ -375,7 +398,11 @@ class Cin7Client:
     def complete_assembly(self, assembly_id: str, actual_qty: float) -> Assembly:
         """Stage 4: Complete. POST /finishedGoods/pick with the
         auto-populated PickLines and Status="COMPLETED" -- the one worked
-        example in Cin7's docs.
+        example in Cin7's docs, which also carries Account/WIPAccount and
+        CompletionDate/WIPDate on this same call. Sent pre-emptively
+        (Create needed Account/WIPAccount too, confirmed live 2026-09-11 --
+        see create_assembly's docstring) rather than wait to hit the same
+        400 twice; CompletionDate/WIPDate default to right now.
 
         `actual_qty` must match the assembly's own Quantity (set at
         Create) -- the documented pick/complete request has no field for
@@ -395,10 +422,15 @@ class Cin7Client:
                 "has no field to change it at this stage, see this method's docstring"
             )
         pick = self._get_pick(assembly_id)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         body = self._post_json("finishedGoods/pick", {
             "TaskID": assembly_id,
             "Status": "COMPLETED",
             "PickLines": pick.get("PickLines") or [],
+            "Account": CIN7_FINISHED_GOODS_ACCOUNT,
+            "WIPAccount": CIN7_WIP_ACCOUNT,
+            "CompletionDate": now,
+            "WIPDate": now,
         })
         return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 

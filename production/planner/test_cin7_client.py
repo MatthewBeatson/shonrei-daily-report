@@ -274,6 +274,9 @@ class CreateAssemblyTests(unittest.TestCase):
         self.assertEqual(kwargs['json'], {
             'ProductID': 'product-guid-1', 'ProductCode': 'FG-ASSEMBLED',
             'Quantity': 5.0, 'Location': 'Main Warehouse', 'Status': 'DRAFT',
+            # Confirmed required by a live 400 against WIP110, 2026-09-11 --
+            # Shonrei's own tenant account codes, see cin7_client.py's module docstring.
+            'Account': '720', 'WIPAccount': '721B',
         })
         self.assertEqual(assembly, Assembly(assembly_id='task-1', sku='FG-ASSEMBLED', status='DRAFT', qty=5.0))
 
@@ -325,8 +328,14 @@ class CompleteAssemblyTests(unittest.TestCase):
 
         post_args, post_kwargs = mock_post.call_args
         self.assertIn('/finishedGoods/pick', post_args[0])
-        self.assertEqual(post_kwargs['json'], {
+        sent = dict(post_kwargs['json'])
+        completion_date, wip_date = sent.pop('CompletionDate'), sent.pop('WIPDate')
+        self.assertEqual(completion_date, wip_date)  # both stamped "now" together
+        self.assertEqual(sent, {
             'TaskID': 'task-1', 'Status': 'COMPLETED', 'PickLines': PICK_LINES_RESPONSE['PickLines'],
+            # Same Account/WIPAccount as Create -- Cin7's docs show the
+            # Complete call carrying them too, see complete_assembly's docstring.
+            'Account': '720', 'WIPAccount': '721B',
         })
         self.assertEqual(assembly.status, 'COMPLETED')
 
