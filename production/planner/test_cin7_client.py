@@ -405,7 +405,37 @@ class CompleteAssemblyTests(unittest.TestCase):
         put_args, put_kwargs = mock_put.call_args
         self.assertIn('/finishedGoods', put_args[0])
         self.assertEqual(put_kwargs['json']['Quantity'], 10.0)
+        # Confirmed live, 2026-09-11: this PUT 400's without CompletionDate/
+        # WIPDate too ("Required attribute 'WIPDate'/'CompletionDate' not
+        # provided.") -- not in Cin7's documented PUT model at all.
+        self.assertIn('CompletionDate', put_kwargs['json'])
+        self.assertIn('WIPDate', put_kwargs['json'])
         self.assertEqual(assembly.status, 'COMPLETED')
+
+
+class AdjustAssemblyQtyTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.get')
+    def test_put_includes_completion_and_wip_date(self, mock_get, mock_put):
+        # Confirmed live, 2026-09-11: PUT /finishedGoods 400's without
+        # these two -- "Required attribute 'WIPDate'/'CompletionDate' not
+        # provided." -- even though Cin7's own documented PUT model
+        # doesn't list them as required at all.
+        mock_get.side_effect = [_mock_write_response(FULL_ASSEMBLY_AUTHORISED), _mock_write_response(dict(FULL_ASSEMBLY_AUTHORISED, Quantity=7.0))]
+        mock_put.return_value = _mock_write_response({"TaskID": "task-1", "Quantity": 7.0})
+
+        self.client.adjust_assembly_qty('task-1', 7.0)
+
+        put_args, put_kwargs = mock_put.call_args
+        self.assertIn('/finishedGoods', put_args[0])
+        sent = put_kwargs['json']
+        self.assertEqual(sent['Quantity'], 7.0)
+        completion_date, wip_date = sent['CompletionDate'], sent['WIPDate']
+        self.assertTrue(completion_date and wip_date)
+        self.assertEqual(completion_date, wip_date)  # both stamped "now" together
 
 
 class CloseAssemblyTests(unittest.TestCase):

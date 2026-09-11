@@ -499,10 +499,20 @@ class Cin7Client:
         from what was planned, this calls adjust_assembly_qty first to
         update it in place (Cin7's own "Assembly order" screen calls this
         same field "Actual yield" once an assembly is past Draft, and
-        editing it before Complete works -- confirmed live 2026-09-11,
-        see adjust_assembly_qty's docstring). PickLines are then built
-        (and, on Complete, the finished-good quantity itself) at
-        `actual_qty`, not whatever the assembly was originally for.
+        editing it before Complete works -- confirmed at the UI level,
+        2026-09-11, see adjust_assembly_qty's docstring). PickLines are
+        then built (and, on Complete, the finished-good quantity itself)
+        at `actual_qty`, not whatever the assembly was originally for.
+
+        A live test of this exact mismatch path (2026-09-11, WIP110,
+        planned 10 -> actual 5) hit adjust_assembly_qty's missing-
+        CompletionDate/WIPDate 400 before it could complete -- so real
+        stock ended up consumed at the ORIGINAL planned qty (10), not
+        the smaller actual (5), and the completed record's Quantity
+        stayed 10. That's now fixed in adjust_assembly_qty, but this
+        mismatch path (complete_assembly with actual_qty != the
+        assembly's current Quantity) is not yet re-confirmed working
+        end-to-end -- worth another live test before trusting it fully.
         """
         full = self._get_full_assembly(assembly_id)
         existing_qty = full.get("Quantity")
@@ -556,14 +566,21 @@ class Cin7Client:
         yield" once an assembly is Authorised/"Work in progress" rather
         than "Quantity" (its Draft-stage label) -- and editing it (100 ->
         95) before hitting Complete worked, completing the assembly at
-        95. The documented PUT /finishedGoods model lists Quantity as an
-        editable field with no status restriction called out, which
-        matches. NOT YET independently confirmed as a raw API call this
-        method makes itself, though -- only inferred from the UI doing
-        the equivalent. If this errors when called directly, the proven
-        fallback is close_assembly() + create_authorised_assembly()
-        (backorder_targets.sync_targets already has both available)."""
+        95.
+
+        A live 400 (2026-09-11, against WIP110) found this PUT also
+        requires CompletionDate and WIPDate -- not called out in Cin7's
+        documented PUT model at all ("Required attribute
+        'WIPDate'/'CompletionDate' not provided."). Both default to
+        right now, same as complete_assembly. Still not independently
+        confirmed to SUCCEED as a raw API call (that same live run hit
+        this 400 before getting a working response) -- next test is
+        re-running with these fields included. If it errors for some
+        other reason, the proven fallback is close_assembly() +
+        create_authorised_assembly() (backorder_targets.sync_targets
+        already has both available)."""
         full = self._get_full_assembly(assembly_id)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         body = self._put_json("finishedGoods", {
             "ID": full.get("ID") or assembly_id,
             "ProductCode": full.get("ProductCode"),
@@ -571,6 +588,8 @@ class Cin7Client:
             "Quantity": new_qty,
             "Location": full.get("Location"),
             "LocationID": full.get("LocationID"),
+            "CompletionDate": now,
+            "WIPDate": now,
         })
         return self._assembly_from(self._get_full_assembly(body.get("TaskID") or assembly_id))
 

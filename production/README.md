@@ -631,10 +631,31 @@ assembly is past Draft -- and editing it before Complete works (tested
 100 -> 95, completed fine). `complete_assembly` now calls
 `adjust_assembly_qty` (the `PUT` that edits Quantity) when the actual
 qty differs from what was authorised, instead of hard-blocking.
-`adjust_assembly_qty`'s own `PUT` call itself is only inferred to work
-this way (the UI likely makes the same call, not proven) -- a good next
-live test would be calling it directly via the API on one of the
-remaining test assemblies before voiding it.
+
+**A live test of the raw API call (not the UI) found two more issues
+(2026-09-11, WIP110, planned 10 -> attempted actual 5):**
+- `adjust_assembly_qty`'s `PUT` 400'd -- `"Required attribute
+  'WIPDate'/'CompletionDate' not provided."` -- not in Cin7's documented
+  PUT model at all. Since the adjustment silently never took effect,
+  real stock ended up consumed at the ORIGINAL planned qty (10), not the
+  smaller actual (5), and the completed record's `Quantity` stayed 10.
+  Now fixed (`CompletionDate`/`WIPDate` added, defaulting to now) --
+  `scripts/dump_sample_assembly_actuals.py` (rewritten to call the real
+  `Cin7Client` methods directly) is built to re-confirm this actually
+  works end to end.
+- A second hypothesis -- correcting one labour line's actual hours by
+  re-submitting `OrderLines` (`POST /finishedGoods/order` again) after
+  an assembly is already Authorised -- is confirmed **impossible**:
+  `"Finished Goods task Status is AUTHORISED."` `OrderLines` can only be
+  submitted once, at the Draft -> Authorised transition. Since Shonrei's
+  real process enters actuals AFTER allocation (i.e. after this window
+  has closed), there's no API-level way to reflect real labour hours on
+  a specific line once an assembly is authorised -- only the assembly's
+  overall Quantity (actual yield) stays adjustable post-Authorise, via
+  `adjust_assembly_qty`. This closes off the "actual labour hours"
+  floor-app idea from earlier as not achievable this way; a labour
+  line's cost will always reflect the standard BOM rate, scaled to
+  whatever the final adjusted Quantity ends up being.
 
 `close_assembly` (cancel/void) is the one piece of the write side still
 completely unconfirmed live -- `scripts/void_test_assemblies.py` (below)
@@ -652,26 +673,27 @@ remaining step is re-running it with the labour-line fix included, then
 swapping `DryRunCin7Client` for a real `Cin7Client` in the
 backorder-target/batch flow -- see "What's dry-run vs. real today" above.
 
-**Possible follow-up (not yet scoped) -- three related batch-completion
-UI pieces, all confirmed to have a real underlying Cin7 mechanism now:**
+**Possible follow-up (not yet scoped) -- two of three earlier batch-
+completion UI ideas still stand, the third is ruled out:**
 1. **Actual yield override** -- `complete_assembly` already supports
    this (see above); the floor-app piece is just a quick-add "actual
    yield" field on batch completion, defaulting to the batch's planned
    run size.
 2. **Pick-line override** -- letting a batch's `PickLines` (the physical
    components actually consumed) be adjusted for the rare substitution
-   case, rather than always exactly matching the BOM.
-3. **Actual labour hours per service line** -- Cin7's BOM-derived labour
-   quantity is only the standard/planned figure. If someone enters real
-   hours for a labour line, the same per-unit/total-quantity shape
-   already used (`Quantity` = per-unit rate, `TotalQuantity` = total for
-   the run) works out to `TotalQuantity` = entered hours straight
-   through, `Quantity` = entered hours / actual yield -- falling back to
-   the BOM's standard rate x actual yield when nothing's entered.
+   case, rather than always exactly matching the BOM. Still viable --
+   PickLines is submitted fresh at Complete, no re-Authorise needed.
+3. ~~Actual labour hours per service line~~ -- **ruled out** (see the
+   live findings above): `OrderLines` can only be submitted once, at
+   Authorise, and Shonrei's real process enters actuals after that
+   point. A labour line's cost will always reflect the standard BOM
+   rate, scaled to whatever the assembly's final adjusted Quantity ends
+   up being via `adjust_assembly_qty` -- not a separately entered
+   actual-hours figure.
 
 Actuals in Shonrei's real process are always entered after allocation,
 which lines up with where `apply_batch_actual` (`backorder_targets.py`)
-already sits -- the natural place to add all three as optional overrides
+already sits -- the natural place to add the two remaining overrides
 before it reaches `complete_small_assembly`.
 
 ## Still not built
