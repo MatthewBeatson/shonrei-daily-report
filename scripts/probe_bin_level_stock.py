@@ -89,19 +89,29 @@ def main():
         current = client.get_stock_on_hand(sku)
         # adjust_stock_on_hand doesn't take a Bin param yet -- this is exactly
         # why we're probing: does Lines[].Bin on the write side even work?
-        # Hand-rolled here (not the real method) so we can pass Bin without
-        # committing that shape into cin7_client.py before confirming it lands.
+        # Hand-rolled here (not the real method), mirroring its EXACT
+        # confirmed-working line shape (ProductID/ProductName/Location
+        # included -- the first attempt omitted these and got a generic
+        # "Lines is invalid" back, which doesn't say which field was the
+        # problem) plus one addition: Bin.
         product = client._get_product(sku)  # noqa: SLF001
+        print(f'Product ID={product.get("ID")!r}, DefaultLocation={product.get("DefaultLocation")!r}, '
+              f'AverageCost={product.get("AverageCost")!r}')
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S')
+        line = {
+            "SKU": sku,
+            "ProductID": product["ID"],
+            "ProductName": product.get("Name"),
+            "Location": product.get("DefaultLocation"),
+            "Bin": bin_name,
+            "Quantity": current + 1,
+            "UnitCost": product.get("AverageCost") or 0,
+            "Comments": "probe_bin_level_stock.py -- testing Bin-tagged adjustment",
+        }
         payload = {
             "EffectiveDate": now,
-            "Lines": [{
-                "SKU": sku,
-                "Quantity": current + 1,
-                "UnitCost": product.get("AverageCost") or 0,
-                "Bin": bin_name,
-            }],
+            "Lines": [line],
             "Reference": "probe_bin_level_stock.py -- testing Bin-tagged adjustment",
             "Status": "DRAFT",
         }
@@ -110,8 +120,22 @@ def main():
         try:
             client._raise_for_status_with_body(resp)  # noqa: SLF001
         except Exception as exc:  # noqa: BLE001
-            print(f'POST FAILED: {exc}')
-            sys.exit(1)
+            print(f'POST FAILED with Bin included: {exc}')
+            print('\nRetrying WITHOUT Bin, to isolate whether Bin itself is the invalid field '
+                  '(vs. something else in the line)...')
+            line_no_bin = {k: v for k, v in line.items() if k != 'Bin'}
+            payload['Lines'] = [line_no_bin]
+            print(f'POST stockadjustment (no Bin): {json.dumps(payload, indent=2)}')
+            resp = requests.post(f'{CIN7_BASE_URL}/stockadjustment', headers=client._headers(), json=payload, timeout=60)
+            try:
+                client._raise_for_status_with_body(resp)  # noqa: SLF001
+            except Exception as exc2:  # noqa: BLE001
+                print(f'POST FAILED even without Bin: {exc2}')
+                print('So Bin was not the (only) problem -- something else in the line is invalid.')
+                sys.exit(1)
+            print('POST SUCCEEDED without Bin -- so Bin is very likely the field Cin7 rejected. '
+                  'This draft has NO Bin set; either complete it plain (no bin tag) or void it in '
+                  'Cin7\'s UI and treat this as confirmation that Bin cannot be set this way.')
         draft = resp.json()
         task_id = draft['TaskID']
         print(f'DRAFT created, TaskID={task_id}')
