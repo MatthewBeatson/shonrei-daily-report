@@ -36,6 +36,28 @@ REAL_AVAILABILITY_RESPONSE = {
     }],
 }
 
+# Captured live (2026-09-16, 14LSWL/NB) after pushing one Bin-tagged
+# stock adjustment: ref/productavailability returned TWO rows for the
+# same SKU -- the original Bin:null row, untouched, plus a new row for
+# the tagged bin with its own separate OnHand. Confirms Cin7 really
+# tracks quantity per bin, not as a label -- see cin7_client.py's
+# get_stock_on_hand/get_availability docstrings.
+REAL_AVAILABILITY_RESPONSE_MULTI_BIN = {
+    "Total": 2, "Page": 1,
+    "ProductAvailabilityList": [
+        {
+            "ID": "a89bfc48-fc7d-431d-9a44-0075728e68c4", "SKU": "14LSWL/NB",
+            "Location": "Shonrei factory/main warehouse", "Bin": None,
+            "OnHand": 10.0, "Allocated": 35.0, "Available": -25.0, "OnOrder": 36.0,
+        },
+        {
+            "ID": "a89bfc48-fc7d-431d-9a44-0075728e68c4", "SKU": "14LSWL/NB",
+            "Location": "Shonrei factory/main warehouse", "Bin": "Stockroom - Main",
+            "OnHand": 11.0, "Allocated": 0.0, "Available": 11.0, "OnOrder": 0.0,
+        },
+    ],
+}
+
 # Captured live via scripts/dump_sample_bom.py WIPMT20T (2026-09-09), with
 # IncludeBOM=true -- the actual fix confirmed for real, not just from docs.
 # Trimmed to the fields get_bom touches; BillOfMaterialsServices (labour/
@@ -199,6 +221,14 @@ class GetAvailabilityTests(unittest.TestCase):
         self.client.get_availability(['A', 'B', 'C'])
         self.assertEqual(mock_get.call_count, 3)
 
+    @patch('cin7_client.requests.get')
+    def test_sums_available_across_every_bin_row(self, mock_get):
+        # A SKU with bin-tagged stock gets more than one row back --
+        # planning needs the whole-warehouse figure regardless of bin.
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        result = self.client.get_availability(['14LSWL/NB'])
+        self.assertEqual(result, {'14LSWL/NB': -25.0 + 11.0})
+
 
 class GetStockOnHandTests(unittest.TestCase):
     def setUp(self):
@@ -210,6 +240,25 @@ class GetStockOnHandTests(unittest.TestCase):
         # on-hand, not stock minus what's allocated elsewhere.
         mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE)
         self.assertEqual(self.client.get_stock_on_hand('WIPMT20T'), 43.0)
+
+    @patch('cin7_client.requests.get')
+    def test_default_sums_on_hand_across_every_bin(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        self.assertEqual(self.client.get_stock_on_hand('14LSWL/NB'), 10.0 + 11.0)
+
+    @patch('cin7_client.requests.get')
+    def test_bin_name_filters_to_just_that_bins_own_on_hand(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        self.assertEqual(
+            self.client.get_stock_on_hand('14LSWL/NB', bin_name='Stockroom - Main'), 11.0,
+        )
+
+    @patch('cin7_client.requests.get')
+    def test_bin_name_with_no_matching_row_returns_zero_not_an_error(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        self.assertEqual(
+            self.client.get_stock_on_hand('14LSWL/NB', bin_name='Alleyways/Finishing Area'), 0.0,
+        )
 
 
 # -- write-side tests -- shapes from Cin7's own documented "Finished
@@ -748,6 +797,44 @@ class AdjustStockOnHandTests(unittest.TestCase):
 
         self.assertNotIn('StocktakeNumber', mock_post.call_args[1]['json'])
         self.assertNotIn('StocktakeNumber', mock_put.call_args[1]['json'])
+
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_bin_name_included_on_the_line_when_given(self, mock_get, mock_post, mock_put):
+        # Confirmed live (2026-09-16, 14LSWL/NB): a line's "Bin" value
+        # resolves into a real, distinct LocationID on Cin7's side -- not
+        # a Bin/BinID pair as the docs show. Not itself asserted here
+        # (that's Cin7's own behaviour, not this client's) -- this only
+        # confirms we send it.
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        draft_response = {"TaskID": "adj-task-1", "Status": "DRAFT", "Lines": []}
+        mock_post.return_value = _mock_write_response(draft_response)
+        mock_put.return_value = _mock_write_response({**draft_response, "Status": "COMPLETED"})
+
+        client = Cin7Client(account_id='x', api_key='y')
+        client.adjust_stock_on_hand('FG-ASSEMBLED', 11.0, bin_name='Stockroom - Main')
+
+        self.assertEqual(mock_post.call_args[1]['json']['Lines'][0]['Bin'], 'Stockroom - Main')
+        # No Lines came back on the POST response (draft_response above
+        # matches what's actually seen live -- GET/POST return
+        # NewStockLines, never a "Lines" key), so the completing PUT
+        # must fall back to the locally-built line, Bin included.
+        self.assertEqual(mock_put.call_args[1]['json']['Lines'][0]['Bin'], 'Stockroom - Main')
+
+    @patch('cin7_client.requests.put')
+    @patch('cin7_client.requests.post')
+    @patch('cin7_client.requests.get')
+    def test_no_bin_field_when_not_given(self, mock_get, mock_post, mock_put):
+        mock_get.return_value = _mock_write_response(PRODUCT_FOR_CREATE)
+        draft_response = {"TaskID": "adj-task-1", "Status": "DRAFT", "Lines": []}
+        mock_post.return_value = _mock_write_response(draft_response)
+        mock_put.return_value = _mock_write_response({**draft_response, "Status": "COMPLETED"})
+
+        client = Cin7Client(account_id='x', api_key='y')
+        client.adjust_stock_on_hand('FG-ASSEMBLED', 55.0)
+
+        self.assertNotIn('Bin', mock_post.call_args[1]['json']['Lines'][0])
 
 
 class GetOpenStockAdjustmentsTests(unittest.TestCase):

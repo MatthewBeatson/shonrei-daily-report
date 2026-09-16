@@ -123,11 +123,15 @@
         </div>
         <p class="sub" id="stocktake-number-status"></p>
         <p class="sub">
-          "Sync totals" sums every still-<strong>recorded</strong> count per
-          SKU across whichever areas it was counted in, and pushes one
-          adjustment per SKU tagged with the Cin7 Stocktake number above.
-          Safe to run more than once as areas finish counting. Only for
-          the formal area-based stocktake -- the per-row "Push adjustment"
+          "Sync totals" pushes every still-<strong>recorded</strong> count
+          straight to its own Cin7 Bin -- each counting area IS a real Cin7
+          Bin (set in Warehouse Locations below), so a count is never
+          combined with another area's count for the same SKU; Cin7
+          already keeps its own per-bin total. Tagged with the Cin7
+          Stocktake number above. A count whose area has no Cin7 Bin
+          linked yet is skipped, not lost -- link one and re-run. Safe to
+          run more than once as areas finish counting. Only for the
+          formal area-based stocktake -- the per-row "Push adjustment"
           button below is still the ad-hoc, single-SKU path.
         </p>
         <table class="overrides-table" id="stocktake-table">
@@ -162,8 +166,16 @@
             <option value="SA">SA</option>
             <option value="FP">FP</option>
           </select>
+          <input type="text" id="new-location-cin7-bin" placeholder="Cin7 Bin (optional)" style="max-width:160px;">
           <button class="btn-primary" id="add-location-btn">Add location</button>
         </div>
+        <p class="sub">
+          Cin7 Bin: the exact Bin Description from Cin7's Settings &gt;
+          Reference Books &gt; Locations &gt; Bins, under the one
+          "Shonrei factory/main warehouse" Location. Once set, a
+          stocktake count logged against this area pushes straight to
+          that bin in Cin7 -- see production/README.md.
+        </p>
 
         <div class="admin-toolbar">
           <label for="locations-filter" class="sub" style="margin:0;">Filter:</label>
@@ -178,7 +190,7 @@
 
         <table class="overrides-table" id="locations-table">
           <thead>
-            <tr><th>Code</th><th>Type</th><th>Description</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
+            <tr><th>Code</th><th>Type</th><th>Description</th><th>Cin7 Bin</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
           </thead>
           <tbody id="locations-tbody"></tbody>
         </table>

@@ -358,9 +358,15 @@ async function syncStocktakeTotals() {
   setError('');
   try {
     const { synced } = await api('/production/stocktake/sync', { method: 'POST', body: JSON.stringify({}) });
-    setSuccess(synced.length
-      ? `Synced ${synced.length} SKU total(s) to Cin7.`
-      : 'Nothing to sync -- no counts are currently "recorded".');
+    const skipped = synced.filter((r) => r.skipped);
+    const pushed = synced.length - skipped.length;
+    if (!synced.length) {
+      setSuccess('Nothing to sync -- no counts are currently "recorded".');
+    } else if (skipped.length) {
+      setError(`Pushed ${pushed} count(s) to Cin7. Skipped ${skipped.length} -- link a Cin7 Bin to their area(s) first: ${skipped.map((r) => r.sku).join(', ')}.`);
+    } else {
+      setSuccess(`Pushed ${pushed} count(s) to Cin7.`);
+    }
     await loadStocktake();
   } catch (err) {
     setError(err.message);
@@ -385,12 +391,33 @@ async function loadLocations() {
         <td>${escapeHtml(loc.code)}</td>
         <td>${escapeHtml(loc.stock_type || '—')}</td>
         <td>${escapeHtml(loc.description || '—')}</td>
+        <td class="narrow"></td>
         <td>${escapeHtml(skusText)}</td>
         <td class="narrow"></td>
         <td class="narrow"></td>
       `;
 
-      const assignCell = tr.querySelector('td.narrow');
+      // Cin7 Bin -- the exact Bin Description under Settings > Reference
+      // Books > Locations > Bins this area corresponds to (see
+      // production/README.md "Stocktake"). Inline-editable: this column
+      // is the one most likely to be filled in retroactively, once bins
+      // exist in Cin7 for locations that were created before them.
+      const binCell = tr.querySelectorAll('td.narrow')[0];
+      const binInput = document.createElement('input');
+      binInput.type = 'text';
+      binInput.placeholder = 'Cin7 Bin';
+      binInput.value = loc.cin7_bin || '';
+      binInput.style.width = '130px';
+      binInput.style.display = 'inline-block';
+      const binSaveBtn = document.createElement('button');
+      binSaveBtn.className = 'btn-link';
+      binSaveBtn.textContent = 'Save';
+      binSaveBtn.addEventListener('click', () => saveLocationCin7Bin(loc, binInput.value.trim()));
+      binCell.appendChild(binInput);
+      binCell.appendChild(document.createTextNode(' '));
+      binCell.appendChild(binSaveBtn);
+
+      const assignCell = tr.querySelectorAll('td.narrow')[1];
       const skuInput = document.createElement('input');
       skuInput.type = 'text';
       skuInput.placeholder = 'SKU';
@@ -404,7 +431,7 @@ async function loadLocations() {
       assignCell.appendChild(document.createTextNode(' '));
       assignCell.appendChild(assignBtn);
 
-      const labelCell = tr.querySelectorAll('td.narrow')[1];
+      const labelCell = tr.querySelectorAll('td.narrow')[2];
       const labelBtn = document.createElement('button');
       labelBtn.className = 'btn-link';
       labelBtn.textContent = 'Print';
@@ -422,17 +449,40 @@ async function addLocation() {
   const code = document.getElementById('new-location-code').value.trim();
   const description = document.getElementById('new-location-description').value.trim();
   const stockType = document.getElementById('new-location-stock-type').value;
+  const cin7Bin = document.getElementById('new-location-cin7-bin').value.trim();
   if (!code) { setError('Enter a location code first.'); return; }
   setError('');
   try {
     await api('/production/warehouse/locations', {
       method: 'POST',
-      body: JSON.stringify({ code, description: description || null, stock_type: stockType || null }),
+      body: JSON.stringify({ code, description: description || null, stock_type: stockType || null, cin7_bin: cin7Bin || null }),
     });
     document.getElementById('new-location-code').value = '';
     document.getElementById('new-location-description').value = '';
     document.getElementById('new-location-stock-type').value = '';
+    document.getElementById('new-location-cin7-bin').value = '';
     setSuccess(`Added location ${code}.`);
+    await loadLocations();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+// Re-posts the same location code (POST is upsert-on-code, see the
+// backend route) with just cin7_bin changed -- the quick path for
+// linking a bin to an area created before its matching Cin7 Bin
+// existed, without re-typing description/stock_type.
+async function saveLocationCin7Bin(loc, cin7Bin) {
+  setError('');
+  try {
+    await api('/production/warehouse/locations', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: loc.code, description: loc.description, stock_type: loc.stock_type,
+        cin7_bin: cin7Bin || null,
+      }),
+    });
+    setSuccess(`Updated Cin7 Bin for ${loc.code}.`);
     await loadLocations();
   } catch (err) {
     setError(err.message);

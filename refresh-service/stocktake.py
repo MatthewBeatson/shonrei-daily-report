@@ -14,8 +14,8 @@ choices carried over from that workflow rather than reinvented:
     has to "open" and "close" -- matches how staff actually used the old
     sheet (whenever they noticed a discrepancy, not on a schedule).
 
-Two parallel ways a count reaches Cin7, confirmed design (2026-09-11),
-both going through Cin7's real "Stock Adjustment" object either way:
+Two parallel ways a count reaches Cin7, both going through Cin7's real
+"Stock Adjustment" object either way:
 
   - **Formal stocktake** -- Shonrei's real process: admin starts a
     Cin7-native Stocktake (e.g. ST-00233) manually in Cin7's own UI,
@@ -23,15 +23,28 @@ both going through Cin7's real "Stock Adjustment" object either way:
     count by AREA (scan a warehouse.locations barcode to set which area
     they're counting in, then scan SKUs within it -- see
     production/README.md "Labels & warehouse locations"), so the same
-    SKU can have several `stocktake.counts` rows, one per area, all
-    sharing that SKU's stable on-hand snapshot (stable because Cin7
-    locks movements during an active stocktake). `sync_stocktake_totals`
-    sums a SKU's counts across every area and pushes ONE adjustment
-    line per SKU, tagged with the active Stocktake number (from
-    `stocktake.settings`, which admin sets/updates at any point in the
-    cycle -- see `get_active_stocktake_number`/`set_active_stocktake_
-    number`). Can be run repeatedly as areas finish counting, not just
-    once at the end.
+    SKU can have several `stocktake.counts` rows, one per area.
+
+    CONFIRMED LIVE (2026-09-16, 14LSWL/NB): each of our counting areas
+    IS a real Cin7 Bin (Settings > Reference Books > Locations > Bins),
+    and Cin7 tracks quantity PER BIN as its own real figure, not just a
+    label -- see cin7_client.adjust_stock_on_hand's docstring. Scanning
+    an area's barcode really is scanning its Cin7 Bin. That changes the
+    design from an earlier draft (this module used to sum a SKU's counts
+    across every area into one combined adjustment): now each count
+    stays scoped to its own area/bin and `sync_stocktake_totals` pushes
+    it AS-IS, tagged with that area's own `cin7_bin` (migration 014) and
+    the active Stocktake number (from `stocktake.settings`, admin sets/
+    updates any time during the cycle -- see
+    `get_active_stocktake_number`/`set_active_stocktake_number`). No
+    in-app aggregation needed or wanted: Cin7 already keeps its own
+    per-bin total, and a combined figure would have blended two
+    genuinely distinct bin quantities into one, leaving Cin7's own
+    per-bin numbers stale even though the SKU-wide total came out right.
+    Can be run repeatedly as areas finish counting, not just once at the
+    end -- a count whose area has no `cin7_bin` linked yet is reported
+    back as skipped (not silently dropped, not left to error the whole
+    sync) so admin can see it needs the location's Cin7 Bin set first.
   - **Ad-hoc** -- the original rolling log, unchanged: any SKU, any
     time, no formal stocktake event needed, pushed one count at a time
     via `apply_adjustment`. Cin7 treats this as its own separate Stock
@@ -48,7 +61,6 @@ here re-opens one yet -- every push still creates its own fresh
 Draft->Completed adjustment, the one proven-safe pattern so far).
 """
 from __future__ import annotations
-from collections import defaultdict
 
 
 class StocktakeError(ValueError):
@@ -74,20 +86,6 @@ def set_active_stocktake_number(conn, stocktake_number: str | None, updated_by: 
         )
     conn.commit()
     return {'active_cin7_stocktake_number': stocktake_number}
-
-
-def aggregate_recorded_counts_by_sku(rows: list[tuple]) -> dict[str, float]:
-    """Pure: sums counted_qty per SKU across however many rows (areas)
-    each SKU has -- e.g. WIP110 counted 40 in "Stockroom - Main" and 15
-    in "Pads & Linings Upstairs" sums to 55. `rows` is (sku, counted_qty)
-    tuples (already filtered by caller to whichever counts should be
-    included, normally status='recorded'). No DB/Cin7 access, unit
-    tested in isolation the same way as everything in production/planner.
-    """
-    totals: dict[str, float] = defaultdict(float)
-    for sku, counted_qty in rows:
-        totals[sku] += float(counted_qty)
-    return dict(totals)
 
 
 def record_count(
@@ -164,51 +162,65 @@ def apply_adjustment(conn, cin7, count_id: str, note: str | None = None) -> dict
 
 
 def sync_stocktake_totals(conn, cin7) -> list[dict]:
-    """Aggregates every currently-'recorded' count by SKU (across
-    however many areas it was counted in -- see aggregate_recorded_
-    counts_by_sku) and pushes ONE adjustment per SKU to Cin7, tagged
-    with the active Stocktake number (StocktakeError if none is set --
-    see set_active_stocktake_number). Safe to call repeatedly through a
-    stocktake cycle as more areas finish counting; only SKUs still
-    'recorded' at call time are included, so already-synced totals
-    aren't re-pushed (and if someone counts more of an already-synced
-    SKU afterwards, that new count is picked up on the next sync as its
-    own fresh total for that SKU, not added to the old one -- Cin7's own
-    Quantity-is-a-target-not-a-delta semantics mean the later push wins,
-    not stacks).
+    """Pushes every currently-'recorded' count to Cin7 as its OWN
+    adjustment, one per count -- each count is already scoped to a
+    single area, and each area IS a real Cin7 Bin (see this module's
+    docstring), so there's no aggregation step: `adjust_stock_on_hand`
+    is called with that count's own counted_qty as the TARGET on-hand
+    for that specific bin (`bin_name=`), tagged with the active
+    Stocktake number (StocktakeError if none is set -- see
+    set_active_stocktake_number).
+
+    A count whose area has no `cin7_bin` linked yet (migration 014) is
+    reported back with `skipped: True` rather than erroring the whole
+    sync or silently dropping it -- admin needs to link that location's
+    Cin7 Bin before it can sync (see production/admin's Warehouse
+    Locations section).
+
+    Safe to call repeatedly through a stocktake cycle as more areas
+    finish counting; only counts still 'recorded' at call time are
+    included, so already-synced ones aren't re-pushed.
     """
     stocktake_number = get_active_stocktake_number(conn)
     if not stocktake_number:
         raise StocktakeError('No active Cin7 stocktake number set -- see set_active_stocktake_number')
 
     with conn.cursor() as cur:
-        cur.execute("select id, sku, counted_qty from stocktake.counts where status = 'recorded'")
+        cur.execute(
+            """select c.id, c.sku, c.counted_qty, l.cin7_bin
+               from stocktake.counts c
+               left join warehouse.locations l on l.code = c.location
+               where c.status = 'recorded'"""
+        )
         rows = cur.fetchall()
     if not rows:
         return []
 
-    count_ids_by_sku: dict[str, list] = defaultdict(list)
-    for count_id, sku, _counted_qty in rows:
-        count_ids_by_sku[sku].append(count_id)
-    totals = aggregate_recorded_counts_by_sku([(sku, qty) for _id, sku, qty in rows])
-
     results = []
-    for sku, total_qty in totals.items():
+    for count_id, sku, counted_qty, cin7_bin in rows:
+        if not cin7_bin:
+            results.append({
+                'count_id': str(count_id), 'sku': sku, 'skipped': True,
+                'reason': "This count's area has no Cin7 Bin linked yet -- set one in "
+                          'Warehouse Locations before syncing.',
+            })
+            continue
+
         adjustment_id = cin7.adjust_stock_on_hand(
-            sku, total_qty, note=f'Stocktake {stocktake_number}', stocktake_number=stocktake_number,
+            sku, float(counted_qty), note=f'Stocktake {stocktake_number}',
+            bin_name=cin7_bin, stocktake_number=stocktake_number,
         )
-        count_ids = count_ids_by_sku[sku]
         with conn.cursor() as cur:
             cur.execute(
                 """update stocktake.counts
                    set status = 'adjusted', cin7_adjustment_id = %s, adjusted_at = now()
-                   where id = any(%s)""",
-                (adjustment_id, count_ids),
+                   where id = %s""",
+                (adjustment_id, count_id),
             )
         conn.commit()
         results.append({
-            'sku': sku, 'total_counted_qty': total_qty, 'count_ids': [str(c) for c in count_ids],
-            'cin7_adjustment_id': adjustment_id, 'stocktake_number': stocktake_number,
+            'count_id': str(count_id), 'sku': sku, 'counted_qty': float(counted_qty),
+            'cin7_bin': cin7_bin, 'cin7_adjustment_id': adjustment_id, 'stocktake_number': stocktake_number,
         })
 
     return results

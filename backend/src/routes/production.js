@@ -376,7 +376,7 @@ router.get('/warehouse/locations', requireProductionAuth, asyncHandler(async (re
     where = 'where l.stock_type = $1';
   }
   const { rows } = await pool.query(
-    `select l.id, l.code, l.description, l.stock_type, l.created_at,
+    `select l.id, l.code, l.description, l.stock_type, l.cin7_bin, l.created_at,
             coalesce(array_agg(sl.sku) filter (where sl.sku is not null), '{}') as current_skus
      from warehouse.locations l
      left join warehouse.sku_locations sl on sl.location_id = l.id
@@ -388,17 +388,25 @@ router.get('/warehouse/locations', requireProductionAuth, asyncHandler(async (re
   res.json({ locations: rows });
 }));
 
+// cin7_bin: the exact Cin7 Bin Description this area corresponds to
+// (Settings > Reference Books > Locations > Bins) -- once set, a
+// stocktake count logged against this area syncs straight to that bin
+// (see production/README.md "Stocktake"). Free text, matched by name,
+// not validated against Cin7 here (no live lookup on every save) --
+// getting it wrong just means Cin7 resolves a mismatched/new bin, which
+// shows up obviously in Cin7's own UI.
 router.post('/warehouse/locations', requireProductionEdit, asyncHandler(async (req, res) => {
-  const { code, description, stock_type } = req.body || {};
+  const { code, description, stock_type, cin7_bin } = req.body || {};
   if (!code) throw new ApiError(400, 'code is required');
   if (stock_type && !['RM', 'SA', 'FP'].includes(stock_type)) {
     throw new ApiError(400, "stock_type must be 'RM', 'SA', or 'FP'");
   }
   const { rows } = await pool.query(
-    `insert into warehouse.locations (code, description, stock_type) values ($1, $2, $3)
-     on conflict (code) do update set description = excluded.description, stock_type = excluded.stock_type
+    `insert into warehouse.locations (code, description, stock_type, cin7_bin) values ($1, $2, $3, $4)
+     on conflict (code) do update set description = excluded.description, stock_type = excluded.stock_type,
+       cin7_bin = excluded.cin7_bin
      returning *`,
-    [code, description || null, stock_type || null]
+    [code, description || null, stock_type || null, cin7_bin || null]
   );
   res.status(201).json({ location: rows[0] });
 }));

@@ -271,7 +271,7 @@ the admin flow (`DryRunCin7Client` logged both the on-hand read and the
 adjustment write), and confirmed a duplicate push on an already-`adjusted`
 count correctly returns 409.
 
-### Formal area-based stocktake, confirmed design (2026-09-11)
+### Formal area-based stocktake, confirmed design (2026-09-16)
 
 The above ("ad-hoc") flow stays -- it's still the right tool for a
 one-off correction outside a scheduled count. Alongside it, Shonrei's
@@ -285,21 +285,39 @@ real periodic stocktake process is a formal Cin7-native event:
   traditional area names (Stockroom - Main, Stockroom - Pads, Pads &
   Linings Upstairs, Alleyways/Finishing Area, etc.) map straight onto
   `warehouse.locations` (the same table put-away already uses -- no new
-  hierarchy needed). On the floor app's Stocktake tab, staff now **scan
-  the area's own location barcode** first (not a typed/picked area
-  name) to set the counting context, then scan SKUs within it as many
-  times as needed -- the same barcode putaway already prints and
-  scans. `stocktake.counts.location` (already existed, migration 009)
-  stores that scanned code, so the same SKU naturally gets one row per
-  area it was counted in.
+  hierarchy needed). On the floor app's Stocktake tab, staff **scan the
+  area's own location barcode** first (not a typed/picked area name) to
+  set the counting context, then scan SKUs within it as many times as
+  needed -- the same barcode putaway already prints and scans.
+  `stocktake.counts.location` (already existed, migration 009) stores
+  that scanned code, so the same SKU naturally gets one row per area it
+  was counted in.
+- **Each area IS a real Cin7 Bin** (`warehouse.locations.cin7_bin`,
+  migration 014) -- Settings > Reference Books > Locations > Bins, under
+  the one "Shonrei factory/main warehouse" Location Cin7 has ever used.
+  CONFIRMED LIVE (2026-09-16, 14LSWL/NB): Cin7 tracks quantity **per
+  bin** as a real, separate figure, not a label -- a stock adjustment
+  line's `Bin` value (e.g. `"Stockroom - Main"`) resolved into a
+  genuine, distinct `LocationID` on the completed line, and
+  `ref/productavailability` subsequently returned a SECOND row for the
+  SKU (the original `Bin: null` row, untouched, plus the new bin's row
+  with its own separate `OnHand`) -- proof this is a real per-bin
+  ledger, not cosmetic. See `cin7_client.adjust_stock_on_hand`'s and
+  `get_stock_on_hand`'s docstrings for the full finding and exact
+  request/response shapes. So scanning an area's barcode really is
+  scanning its Cin7 Bin, and no separate abstraction is needed on top.
 - **Sync** (`stocktake.sync_stocktake_totals`, admin-triggered, safe to
-  run repeatedly through the cycle) sums a SKU's counts across every
-  area (`stocktake.aggregate_recorded_counts_by_sku`, pure, unit
-  tested) and pushes ONE adjustment per SKU to Cin7, tagged with the
-  active Stocktake number via the documented `StocktakeNumber` field on
-  `adjust_stock_on_hand`. Only still-`recorded` counts are included, so
-  re-running sync as more areas finish never double-counts what's
-  already gone through.
+  run repeatedly through the cycle) pushes each still-`recorded` count
+  **as its own adjustment**, tagged with that area's own `cin7_bin` and
+  the active Stocktake number, targeting that BIN's own on-hand (not the
+  SKU's whole-warehouse total). No aggregation across areas -- an
+  earlier draft of this design summed a SKU's counts across every area
+  into one combined adjustment before this was confirmed; that would
+  have blended two genuinely distinct bin quantities into one, leaving
+  Cin7's own per-bin numbers stale even though the SKU-wide total came
+  out right. A count whose area has no `cin7_bin` linked yet comes back
+  `skipped: True` from the sync (surfaced in the admin UI) rather than
+  erroring the whole batch or being silently dropped.
 - **Active Stocktake number** (`stocktake.settings`, migration 013) is
   admin-entered, not looked up automatically -- Cin7 doesn't expose (or
   at least this hasn't confirmed) a "what's the current in-progress
@@ -310,12 +328,37 @@ real periodic stocktake process is a formal Cin7-native event:
   has been counted and synced -- outside this app's scope, same as
   starting it.
 
+**Reading per-bin stock (`cin7_client.get_stock_on_hand`/
+`get_availability`):** `ref/productavailability` -- the one confirmed
+read endpoint, no separate per-bin endpoint exists (several guessed
+paths -- `ref/stocklevel`, `ref/productstocklevel`, `ref/stockbybin`,
+`ref/bin` -- all came back Cin7's fake-200 HTML, i.e. don't exist) --
+returns ONE ROW PER BIN a SKU has any history in once bins are in use,
+not always a single row; `Bin`/`IncludeBin` query params are no-ops, it
+always returns every row unfiltered and callers filter client-side.
+`get_stock_on_hand(sku)`/`get_availability(skus)` (no `bin_name`) now
+SUM across every row -- taking just the first row (the old behaviour)
+would silently under-report any SKU with bin-tagged stock split out of
+the untagged bucket. `get_stock_on_hand(sku, bin_name=...)` filters to
+just that bin's own figure.
+
 **Still open, needs a live test:** whether Cin7 actually accepts a Stock
 Adjustment tagged with `StocktakeNumber` the way `adjust_stock_on_hand`
 now sends it -- the field itself is real (Cin7's own worked example
 includes it), but the one live stock-adjustment test run so far
 (2026-09-11) was a plain no-op with no `stocktake_number` passed. Next
 diagnostic-script step, same pattern as the assembly write-side work.
+
+**A separate, real finding along the way:** a product's own "Default
+location" field (confirmed live as `DefaultLocation` on `GET /product`,
+already used by `adjust_stock_on_hand`'s `Location` line field) does
+**NOT** move any stock into that bin -- it's a label on the product
+record only. Setting 14LSWL/NB's Default location to
+`Shonrei factory/main warehouse: Stockroom - Main` in Cin7's UI had zero
+effect on where its actual on-hand sat (still all in the untagged
+bucket) until a real Bin-tagged stock adjustment was pushed. Useful as a
+"where does this product normally live" hint on the product page, not a
+substitute for tagging actual stock movements with `Bin`.
 
 `cin7_client.get_open_stock_adjustments()` is also wired (the
 documented `GET /stockadjustmentList?Status=DRAFT`) for a possible

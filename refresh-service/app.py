@@ -362,11 +362,13 @@ def stocktake_set_active_number():
 
 @app.post('/stocktake/sync')
 def stocktake_sync():
-    """Aggregates every currently-'recorded' count by SKU (across
-    whichever areas it was counted in) and pushes one adjustment per SKU
-    to Cin7, tagged with the active Stocktake number -- 409s if none is
-    set. Safe to call repeatedly through a stocktake cycle. See
-    stocktake.sync_stocktake_totals.
+    """Pushes every currently-'recorded' count to Cin7 as its own
+    adjustment (each count is already scoped to one area, and each area
+    IS a real Cin7 Bin -- no aggregation across areas), tagged with the
+    active Stocktake number -- 409s if none is set. A count whose area
+    has no Cin7 Bin linked yet comes back `skipped: True` rather than
+    erroring the whole sync. Safe to call repeatedly through a stocktake
+    cycle. See stocktake.sync_stocktake_totals.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401

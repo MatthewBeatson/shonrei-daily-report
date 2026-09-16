@@ -174,7 +174,22 @@ class Cin7Client:
             raise ValueError(f"No Cin7 product found for SKU {sku!r}")
         return products[0]
 
-    def _get_availability_row(self, sku: str) -> dict:
+    def _get_availability_rows(self, sku: str) -> list[dict]:
+        """Every ref/productavailability row for this SKU -- ONE per Bin
+        it has any stock/history in, plus a `Bin: null` row for whatever
+        was never bin-tagged. Confirmed live (2026-09-16, 14LSWL/NB):
+        before any Bin-tagged stock adjustment existed for this SKU, this
+        endpoint returned exactly one row (Bin: null); after pushing a
+        stock adjustment with a real Bin, it returned TWO rows -- the
+        original untouched Bin:null row, plus a new one for the tagged
+        Bin, each with its OWN OnHand/Allocated/Available. So Cin7 really
+        does track quantity per bin, and the query params that looked
+        like filters (`Bin=...`, `IncludeBin=true`) are no-ops -- this
+        always returns every row, unfiltered; callers filter client-side.
+        No separate per-bin endpoint exists/was found (several guessed
+        paths -- ref/stocklevel, ref/productstocklevel, ref/stockbybin,
+        ref/bin -- all came back Cin7's fake-200 HTML, i.e. don't exist).
+        """
         resp = requests.get(
             f"{CIN7_BASE_URL}/ref/productavailability",
             headers=self._headers(), params={"SKU": sku}, timeout=60,
@@ -183,7 +198,17 @@ class Cin7Client:
         rows = resp.json().get("ProductAvailabilityList") or []
         if not rows:
             raise ValueError(f"No Cin7 availability row found for SKU {sku!r}")
-        return rows[0]
+        return rows
+
+    def _get_availability_row(self, sku: str) -> dict:
+        # First row only -- diagnostic/inspection use only now (e.g.
+        # scripts/inspect_product_location_fields.py). Everything inside
+        # this class that actually reports a quantity (get_availability,
+        # get_stock_on_hand) uses _get_availability_rows and sums across
+        # every bin instead: taking only the first row would silently
+        # under-report a SKU with any bin-tagged stock split out of the
+        # untagged bucket.
+        return self._get_availability_rows(sku)[0]
 
     def get_bom(self, sku: str) -> list[dict]:
         """Returns this SKU's BOM lines, or [] if it's a genuine
@@ -245,7 +270,11 @@ class Cin7Client:
     def get_availability(self, skus: list[str]) -> dict[str, float]:
         """SKU -> Cin7's netted "Available" qty (OnHand - Allocated, per
         GET /ExternalApi/v2/ref/productavailability, confirmed against a
-        live account). Feeds explode_bom's `on_hand`.
+        live account), SUMMED ACROSS EVERY BIN -- planning needs the
+        whole-warehouse figure regardless of which bin stock physically
+        sits in, and this endpoint returns one row per bin a SKU has any
+        history in (see _get_availability_rows) once bins are in use, not
+        always a single row. Feeds explode_bom's `on_hand`.
 
         One request per SKU -- a bulk multi-SKU query hasn't been
         confirmed to work on this endpoint, so this stays conservative
@@ -254,8 +283,8 @@ class Cin7Client:
         result = {}
         for sku in skus:
             try:
-                row = self._get_availability_row(sku)
-                result[sku] = row["Available"]
+                rows = self._get_availability_rows(sku)
+                result[sku] = sum(row["Available"] for row in rows)
             except ValueError:
                 result[sku] = 0.0  # no Cin7 record for this SKU -- treat as no stock, not an error
         return result
@@ -739,7 +768,7 @@ class Cin7Client:
     # moment (for the variance shown to whoever reviews it), and -- only
     # once reviewed -- pushed to Cin7 as a stock adjustment.
 
-    def get_stock_on_hand(self, sku: str) -> float:
+    def get_stock_on_hand(self, sku: str, *, bin_name: str | None = None) -> float:
         """Cin7's current on-hand qty for one SKU (the raw `OnHand` field,
         not the netted `Available` figure `get_availability` uses --
         stocktake is a physical count, it should compare against Cin7's
@@ -747,11 +776,26 @@ class Cin7Client:
         snapshotted at count time so the variance shown later reflects
         what Cin7 actually said when the count was taken, not whatever it
         says by the time someone reviews it. Confirmed endpoint, see
-        get_availability's docstring."""
-        return self._get_availability_row(sku)["OnHand"]
+        get_availability's docstring.
+
+        `bin_name=None` (default): whole-SKU total, summed across every
+        bin -- matches the old single-row behaviour for a SKU that's
+        never had any bin-tagged stock, and stays correct once some of
+        it has. `bin_name=<a real Cin7 Bin>`: only that bin's own OnHand
+        (summed across however many rows match it -- normally one), for
+        comparing a stocktake area's count against just that bin, not
+        the SKU's whole-warehouse figure. A bin with no matching row
+        (never had any bin-tagged stock/history) returns 0.0, not an
+        error -- same "no record yet" convention as get_availability.
+        """
+        rows = self._get_availability_rows(sku)
+        if bin_name is None:
+            return sum(row["OnHand"] for row in rows)
+        return sum(row["OnHand"] for row in rows if row.get("Bin") == bin_name)
 
     def adjust_stock_on_hand(
-        self, sku: str, new_qty: float, note: str | None = None, *, stocktake_number: str | None = None,
+        self, sku: str, new_qty: float, note: str | None = None, *,
+        bin_name: str | None = None, stocktake_number: str | None = None,
     ) -> str:
         """Push a physical count to Cin7 as a stock adjustment, setting
         on-hand to `new_qty`. Returns Cin7's TaskID. Deliberately a
@@ -767,7 +811,11 @@ class Cin7Client:
         example has Lines[].Quantity as the TARGET on-hand level after
         the adjustment, not a delta (on-hand 601, Quantity=600 submitted,
         resulting transaction -1) -- `new_qty` is passed straight through
-        as that target level, matching stocktake.py's counted_qty.
+        as that target level, matching stocktake.py's counted_qty. When
+        `bin_name` is given, that target is THAT BIN's own on-hand level,
+        not the SKU's whole-warehouse total (see get_stock_on_hand's
+        `bin_name` param) -- each bin is tracked as its own quantity by
+        Cin7, confirmed live below.
 
         UnitCost is required -- confirmed live (2026-09-11, WIP110, a
         no-op adjustment to the SKU's own current on-hand): a 400
@@ -775,6 +823,21 @@ class Cin7Client:
         mandatory in Cin7's docs at all. Uses the product's own
         AverageCost (a real field on the product record, not guessed)
         rather than inventing a number.
+
+        `bin_name` tags the line with a real Cin7 Bin (Settings >
+        Reference Books > Locations > Bins) -- CONFIRMED LIVE
+        (2026-09-16, 14LSWL/NB): posting `Bin: "Stockroom - Main"` on the
+        line got Cin7 to resolve it into a real, distinct LocationID on
+        the completed line (not a Bin/BinID field at all, despite that
+        being what Cin7's own docs show -- each Bin turned out to be its
+        own child Location entity under the hood). The `Location` field
+        sent alongside it (the product's combined "Warehouse: Bin"
+        DefaultLocation string) was NOT what got used for resolution --
+        Bin was. ref/productavailability subsequently returned a SECOND
+        row for this SKU, `Bin: "Stockroom - Main"`, with its own
+        separate OnHand -- proof this really is a distinct per-bin
+        quantity, not a label. See warehouse.locations.cin7_bin for how
+        our own counting areas carry this value 1:1.
 
         `stocktake_number` ties this adjustment to a formal Cin7
         Stocktake (e.g. "ST-00233", admin-entered -- see
@@ -795,6 +858,8 @@ class Cin7Client:
             "UnitCost": product.get("AverageCost") or 0,
             "Comments": note or "",
         }
+        if bin_name:
+            line["Bin"] = bin_name
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
         payload = {
             "EffectiveDate": now,

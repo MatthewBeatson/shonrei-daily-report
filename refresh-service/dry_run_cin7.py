@@ -65,18 +65,21 @@ class DryRunCin7Client:
         )
         return FakeAssembly(sku, actual_yield, 'COMPLETED')
 
-    def get_stock_on_hand(self, sku: str) -> float:
+    def get_stock_on_hand(self, sku: str, *, bin_name: str | None = None) -> float:
         # Deterministic-but-fake so a repeated count of the same SKU in a
         # demo session shows a stable (if make-believe) baseline rather
-        # than a new random number every time.
+        # than a new random number every time. bin_name doesn't change
+        # the fake figure -- no real per-bin state to fake here.
         fake_qty = float(sum(ord(c) for c in sku) % 200)
-        self._log('get_stock_on_hand', sku=sku, returned=fake_qty)
+        self._log('get_stock_on_hand', sku=sku, bin_name=bin_name, returned=fake_qty)
         return fake_qty
 
     def adjust_stock_on_hand(
-        self, sku: str, new_qty: float, note: str | None = None, *, stocktake_number: str | None = None,
+        self, sku: str, new_qty: float, note: str | None = None, *,
+        bin_name: str | None = None, stocktake_number: str | None = None,
     ) -> str:
-        self._log('adjust_stock_on_hand', sku=sku, new_qty=new_qty, note=note, stocktake_number=stocktake_number)
+        self._log('adjust_stock_on_hand', sku=sku, new_qty=new_qty, note=note,
+                   bin_name=bin_name, stocktake_number=stocktake_number)
         return f'DRYRUN-ADJ-{next(_counter):06d}'
 
     def get_open_stock_adjustments(self) -> list:
