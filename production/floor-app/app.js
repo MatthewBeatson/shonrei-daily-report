@@ -492,6 +492,7 @@ async function goToPaLocationStep() {
   paLocationStep.hidden = false;
   paLocationInput.value = '';
   paAgainBtn.hidden = false;
+  document.getElementById('paBlockErrorLine').hidden = true;
 
   // Tell staff where this SKU actually belongs BEFORE they go looking for
   // a shelf -- the app already knows this from warehouse.sku_locations,
@@ -518,6 +519,7 @@ async function submitPutawayScan() {
   if (!locationCode) return;
   const btn = document.getElementById('paLocationSubmitBtn');
   btn.disabled = true;
+  const blockError = document.getElementById('paBlockErrorLine');
 
   try {
     const data = await apiFetch('/production/warehouse/putaway-scans', {
@@ -525,20 +527,43 @@ async function submitPutawayScan() {
       body: JSON.stringify({ sku: paSku, scanned_location_code: locationCode }),
     });
 
+    // 'action' (see warehouse.py's record_putaway_scan) already combines
+    // the match/same-bay classification with the admin-configured
+    // wrong-bay mode -- this is the one field the UI branches on, no
+    // need to re-derive it here.
+    if (data.action === 'block') {
+      // Different bay AND admin mode is 'block' -- don't advance to the
+      // result screen at all. Every attempt is still recorded server-
+      // side (warehouse.putaway_scans), this just refuses to let staff
+      // move on to a new SKU until a scan actually matches.
+      blockError.textContent = `Wrong bay -- ${paSku}'s home is ${data.expected_location_code}, not ${locationCode}. Scan the correct bay.`;
+      blockError.hidden = false;
+      paLocationInput.value = '';
+      paLocationInput.focus();
+      return;
+    }
+
+    blockError.hidden = true;
     const icon = document.getElementById('paResultIcon');
     const message = document.getElementById('paResultMessage');
-    if (data.matched === true) {
+    if (data.action === 'match') {
       icon.textContent = '✓';
       icon.className = 'pa-result-icon match';
       message.textContent = `Correct -- ${paSku} belongs in ${locationCode}.`;
-    } else if (data.matched === false) {
-      icon.textContent = '✗';
-      icon.className = 'pa-result-icon mismatch';
-      message.textContent = `Wrong bin -- ${paSku}'s home is ${data.expected_location_code}, not ${locationCode}.`;
-    } else {
+    } else if (data.action === 'no_home') {
       icon.textContent = '?';
       icon.className = 'pa-result-icon unknown';
       message.textContent = `${paSku} has no home location set yet -- scan recorded, ask admin to assign one.`;
+    } else if (data.same_bay) {
+      // Wrong shelf, right bay -- close enough, always just a warning.
+      icon.textContent = '✗';
+      icon.className = 'pa-result-icon mismatch';
+      message.textContent = `Wrong shelf (right bay) -- ${paSku}'s home is ${data.expected_location_code}, not ${locationCode}. Recorded -- move it when convenient.`;
+    } else {
+      // Wrong bay, but admin mode is 'warn' -- still just a warning.
+      icon.textContent = '✗';
+      icon.className = 'pa-result-icon mismatch';
+      message.textContent = `Wrong bay -- ${paSku}'s home is ${data.expected_location_code}, not ${locationCode}.`;
     }
 
     paLocationStep.hidden = true;

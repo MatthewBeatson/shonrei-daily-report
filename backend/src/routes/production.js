@@ -363,6 +363,23 @@ router.post('/warehouse/putaway-scans', requireFloorSecret, asyncHandler(async (
   res.status(201).json(data);
 }));
 
+// Admin-set: what the floor app does with a mismatched Putaway scan --
+// 'warn' (default, wave through) or 'block' (must retry until it
+// matches) -- see migration 015. Floor needs to read this too, to know
+// which UI to show after a mismatch.
+router.get('/warehouse/putaway-mismatch-mode', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query('select putaway_mismatch_mode from warehouse.settings where id = true');
+  res.json({ putaway_mismatch_mode: rows[0]?.putaway_mismatch_mode || 'warn' });
+}));
+
+router.post('/warehouse/putaway-mismatch-mode', requireProductionEdit, asyncHandler(async (req, res) => {
+  const { mode } = req.body || {};
+  const data = await callRefreshService('/warehouse/putaway-mismatch-mode', {
+    mode, updated_by: req.productionUser?.email || null,
+  });
+  res.status(200).json(data);
+}));
+
 // Admin: locations list/create, SKU-to-home-location assignment, and the
 // putaway scan log (mismatches are the point of reviewing this). A
 // location can hold several SKUs at once (separate containers sharing a
@@ -376,7 +393,7 @@ router.get('/warehouse/locations', requireProductionAuth, asyncHandler(async (re
     where = 'where l.stock_type = $1';
   }
   const { rows } = await pool.query(
-    `select l.id, l.code, l.description, l.stock_type, l.cin7_bin, l.created_at,
+    `select l.id, l.code, l.description, l.stock_type, l.cin7_bin, l.bay_code, l.created_at,
             coalesce(array_agg(sl.sku) filter (where sl.sku is not null), '{}') as current_skus
      from warehouse.locations l
      left join warehouse.sku_locations sl on sl.location_id = l.id
@@ -395,18 +412,24 @@ router.get('/warehouse/locations', requireProductionAuth, asyncHandler(async (re
 // not validated against Cin7 here (no live lookup on every save) --
 // getting it wrong just means Cin7 resolves a mismatched/new bin, which
 // shows up obviously in Cin7's own UI.
+//
+// bay_code: groups several shelf-level locations under one parent bay
+// (e.g. SRM-B1-04 and SRM-B1-07 both get bay_code 'SRM-B1') -- used only
+// to classify a Putaway mismatch as same-bay (always just a warning) vs
+// a different bay (respects the admin-set mismatch mode above). See
+// migration 016.
 router.post('/warehouse/locations', requireProductionEdit, asyncHandler(async (req, res) => {
-  const { code, description, stock_type, cin7_bin } = req.body || {};
+  const { code, description, stock_type, cin7_bin, bay_code } = req.body || {};
   if (!code) throw new ApiError(400, 'code is required');
   if (stock_type && !['RM', 'SA', 'FP'].includes(stock_type)) {
     throw new ApiError(400, "stock_type must be 'RM', 'SA', or 'FP'");
   }
   const { rows } = await pool.query(
-    `insert into warehouse.locations (code, description, stock_type, cin7_bin) values ($1, $2, $3, $4)
+    `insert into warehouse.locations (code, description, stock_type, cin7_bin, bay_code) values ($1, $2, $3, $4, $5)
      on conflict (code) do update set description = excluded.description, stock_type = excluded.stock_type,
-       cin7_bin = excluded.cin7_bin
+       cin7_bin = excluded.cin7_bin, bay_code = excluded.bay_code
      returning *`,
-    [code, description || null, stock_type || null, cin7_bin || null]
+    [code, description || null, stock_type || null, cin7_bin || null, bay_code || null]
   );
   res.status(201).json({ location: rows[0] });
 }));

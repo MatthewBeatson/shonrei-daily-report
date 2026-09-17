@@ -34,20 +34,36 @@ def _escape_zpl_text(s: str) -> str:
     return str(s).replace('^', '').replace('~', '')
 
 
-def sku_label_zpl(sku: str, description: str | None = None) -> str:
+def sku_label_zpl(sku: str, description: str | None = None, home_location_code: str | None = None) -> str:
     """Product SKU label -- the barcode this repo prints identically onto
     a bin/location label's "what belongs here" line AND directly onto the
     product itself. Same payload (the literal SKU text) in Code128,
     either way -- see production/README.md for why that's deliberate.
+
+    `home_location_code`, if given, is printed as large PLAIN TEXT (not
+    a second barcode) -- confirmed design, 2026-09-17: staff without the
+    floor app open (or without a device on them at all) can still read
+    where this SKU belongs directly off the label, not just scan it.
+    This is a snapshot at print time, not live -- if the SKU's assigned
+    home location changes later, an already-printed label goes stale.
+    Accepted trade-off, not a bug: the floor app's Putaway scan-and-
+    confirm step (see production/README.md) is still what actually
+    verifies where a product landed; this text is a fallback for when
+    that step isn't available, not a replacement for it.
     """
     sku = _escape_zpl_text(sku)
     desc_line = f"^FO40,260^A0N,28,28^FD{_escape_zpl_text(description)}^FS" if description else ""
+    location_line = (
+        f"^FO40,305^A0N,50,50^FDPut away at: {_escape_zpl_text(home_location_code)}^FS"
+        if home_location_code else ""
+    )
     return (
         "^XA\n"
         f"^PW{LABEL_WIDTH_DOTS}\n^LL{LABEL_HEIGHT_DOTS}\n"
         "^FO40,40^A0N,36,36^FDSKU^FS\n"
         f"^FO40,90^BY3\n^BCN,140,Y,N,N\n^FD{sku}^FS\n"
         f"{desc_line}\n"
+        f"{location_line}\n"
         "^XZ\n"
     )
 

@@ -33,7 +33,10 @@ from stocktake import (
     StocktakeError, record_count, apply_adjustment,
     get_active_stocktake_number, set_active_stocktake_number, sync_stocktake_totals,
 )
-from warehouse import WarehouseError, record_putaway_scan, set_home_location
+from warehouse import (
+    WarehouseError, record_putaway_scan, set_home_location,
+    get_putaway_mismatch_mode, set_putaway_mismatch_mode,
+)
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 
 app = Flask(__name__)
@@ -408,6 +411,40 @@ def warehouse_putaway_scan():
     return jsonify(result), 201
 
 
+@app.get('/warehouse/putaway-mismatch-mode')
+def warehouse_get_putaway_mismatch_mode():
+    """'warn' or 'block' -- see migration 015. Floor-accessible read,
+    same pattern as GET /stocktake/active-number."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    conn = get_conn()
+    try:
+        mode = get_putaway_mismatch_mode(conn)
+    finally:
+        conn.close()
+    return jsonify({'putaway_mismatch_mode': mode}), 200
+
+
+@app.post('/warehouse/putaway-mismatch-mode')
+def warehouse_set_putaway_mismatch_mode():
+    """Body: {"mode": "warn"|"block", "updated_by"}. Admin-only -- see
+    migration 015 / production/README.md."""
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    payload = request.get_json(silent=True) or {}
+    mode = payload.get('mode')
+    conn = get_conn()
+    try:
+        try:
+            result = set_putaway_mismatch_mode(conn, mode, payload.get('updated_by'))
+        except WarehouseError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 400
+    finally:
+        conn.close()
+    return jsonify(result), 200
+
+
 @app.put('/warehouse/sku-locations/<path:sku>')
 def warehouse_set_home_location(sku):
     """Body: {"location_code"}. Assigns (or reassigns) a SKU's home
@@ -452,6 +489,12 @@ def label_sku(sku):
     <id>/actual's stock_type in the response, and floor-app/app.js),
     a plain repeat of the same ^XA...^XZ block, which is how Zebra
     printers expect multiple labels in one job.
+
+    Looks up this SKU's assigned home location (warehouse.sku_locations)
+    and prints it as large plain text on the label -- confirmed design,
+    2026-09-17 (see labels.sku_label_zpl's docstring). A SKU with no
+    home location assigned yet just prints without that line, same as
+    omitting `description`.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -459,7 +502,24 @@ def label_sku(sku):
         count = max(1, int(request.args.get('count', 1)))
     except ValueError:
         return jsonify({'error': 'count must be a whole number'}), 400
-    zpl = sku_label_zpl(sku, description=request.args.get('description')) * count
+
+    conn = get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select l.code from warehouse.sku_locations sl
+                   join warehouse.locations l on l.id = sl.location_id
+                   where sl.sku = %s""",
+                (sku,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    home_location_code = row[0] if row else None
+
+    zpl = sku_label_zpl(
+        sku, description=request.args.get('description'), home_location_code=home_location_code,
+    ) * count
     return _zpl_response(zpl, f'sku-{sku}.zpl')
 
 

@@ -16,18 +16,53 @@ class WarehouseError(ValueError):
     pass
 
 
+def get_putaway_mismatch_mode(conn) -> str:
+    """'warn' (default) or 'block' -- see migration 015. Admin-set, read
+    by the floor app before deciding whether a mismatched Putaway scan
+    can be waved through or must be retried."""
+    with conn.cursor() as cur:
+        cur.execute("select putaway_mismatch_mode from warehouse.settings where id = true")
+        row = cur.fetchone()
+    return row[0] if row else 'warn'
+
+
+def set_putaway_mismatch_mode(conn, mode: str, updated_by: str | None = None) -> dict:
+    if mode not in ('warn', 'block'):
+        raise WarehouseError(f"mode must be 'warn' or 'block', got {mode!r}")
+    with conn.cursor() as cur:
+        cur.execute(
+            "update warehouse.settings set putaway_mismatch_mode = %s, updated_by = %s where id = true",
+            (mode, updated_by),
+        )
+    conn.commit()
+    return {'putaway_mismatch_mode': mode}
+
+
 def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: str | None = None) -> dict:
     with conn.cursor() as cur:
         cur.execute(
-            """select l.id, l.code from warehouse.sku_locations sl
+            """select l.id, l.code, l.bay_code from warehouse.sku_locations sl
                join warehouse.locations l on l.id = sl.location_id
                where sl.sku = %s""",
             (sku,),
         )
         row = cur.fetchone()
-    home_location_id, home_location_code = row if row else (None, None)
+    home_location_id, home_location_code, home_bay_code = row if row else (None, None, None)
 
-    result = check_putaway(scanned_location_code, home_location_code)
+    # Bay code of wherever was actually scanned, if it resolves to a
+    # known location at all -- used only to classify a genuine mismatch
+    # as same-bay vs different-bay (see check_putaway). An unrecognised
+    # scanned code just means scanned_bay_code stays None, which
+    # check_putaway already treats as "not the same bay."
+    with conn.cursor() as cur:
+        cur.execute("select bay_code from warehouse.locations where upper(code) = upper(%s)", (scanned_location_code,))
+        scanned_row = cur.fetchone()
+    scanned_bay_code = scanned_row[0] if scanned_row else None
+
+    result = check_putaway(
+        scanned_location_code, home_location_code,
+        scanned_bay_code=scanned_bay_code, home_bay_code=home_bay_code,
+    )
 
     with conn.cursor() as cur:
         cur.execute(
@@ -40,12 +75,33 @@ def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: 
         (scan_id,) = cur.fetchone()
     conn.commit()
 
+    # The single field the floor app actually branches its UI on --
+    # combines the pure match/same-bay classification (putaway.py) with
+    # the admin-configured mode (migration 015) so the frontend doesn't
+    # need to replicate this logic itself:
+    #   match     -- scan matched, nothing to do
+    #   no_home   -- this SKU has no home location assigned yet
+    #   warn      -- mismatch, but same bay (always) or admin mode is
+    #                'warn' -- staff can continue past it
+    #   block     -- mismatch in a different bay AND admin mode is
+    #                'block' -- staff must rescan until it matches
+    if result.matched:
+        action = 'match'
+    elif result.matched is None:
+        action = 'no_home'
+    elif result.same_bay:
+        action = 'warn'
+    else:
+        action = get_putaway_mismatch_mode(conn)
+
     return {
         'scan_id': str(scan_id),
         'sku': sku,
         'scanned_location_code': scanned_location_code,
         'expected_location_code': result.expected_location_code,
         'matched': result.matched,  # true / false / null (no home assigned yet) -- see putaway.py
+        'same_bay': result.same_bay,  # true / false / null (not a mismatch, not applicable)
+        'action': action,
     }
 
 

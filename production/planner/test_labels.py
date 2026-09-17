@@ -28,6 +28,19 @@ class SkuLabelZplTests(unittest.TestCase):
         zpl = sku_label_zpl('FG~2400^BOX')
         self.assertIn('^FDFG2400BOX^FS', zpl)
 
+    def test_home_location_printed_as_large_plain_text_not_a_barcode(self):
+        # Confirmed design, 2026-09-17: readable by a person without the
+        # floor app open, not scanned -- only one barcode field, ever.
+        zpl = sku_label_zpl('FG-2400-BOX', home_location_code='SRM-B1-04')
+        self.assertIn('Put away at: SRM-B1-04', zpl)
+        self.assertIn('A0N,50,50', zpl)  # large font, distinct from the small description size
+        self.assertEqual(zpl.count('^BCN,'), 1)  # still just the SKU's own barcode
+
+    def test_no_home_location_line_when_omitted(self):
+        zpl = sku_label_zpl('FG-2400-BOX')
+        self.assertNotIn('Put away at', zpl)
+        self.assertNotIn('A0N,50,50', zpl)
+
 
 class LocationLabelZplTests(unittest.TestCase):
     def test_location_code_is_the_only_barcode(self):

@@ -373,6 +373,34 @@ async function syncStocktakeTotals() {
   }
 }
 
+// -- Putaway wrong-bay mismatch mode ------------------------------------
+
+async function loadPutawayMismatchMode() {
+  try {
+    const { putaway_mismatch_mode } = await api('/production/warehouse/putaway-mismatch-mode');
+    document.getElementById('putaway-mismatch-mode-select').value = putaway_mismatch_mode || 'warn';
+    document.getElementById('putaway-mismatch-mode-status').textContent = putaway_mismatch_mode === 'block'
+      ? 'Staff must rescan a wrong-bay Putaway until it matches.'
+      : 'Staff can continue past a wrong-bay Putaway scan (default).';
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
+async function savePutawayMismatchMode() {
+  setError('');
+  const mode = document.getElementById('putaway-mismatch-mode-select').value;
+  try {
+    await api('/production/warehouse/putaway-mismatch-mode', {
+      method: 'POST', body: JSON.stringify({ mode }),
+    });
+    setSuccess(`Wrong-bay Putaway mode set to "${mode}".`);
+    await loadPutawayMismatchMode();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
 // -- Warehouse locations -----------------------------------------------
 
 async function loadLocations() {
@@ -391,6 +419,7 @@ async function loadLocations() {
         <td>${escapeHtml(loc.code)}</td>
         <td>${escapeHtml(loc.stock_type || '—')}</td>
         <td>${escapeHtml(loc.description || '—')}</td>
+        <td class="narrow"></td>
         <td class="narrow"></td>
         <td>${escapeHtml(skusText)}</td>
         <td class="narrow"></td>
@@ -412,12 +441,31 @@ async function loadLocations() {
       const binSaveBtn = document.createElement('button');
       binSaveBtn.className = 'btn-link';
       binSaveBtn.textContent = 'Save';
-      binSaveBtn.addEventListener('click', () => saveLocationCin7Bin(loc, binInput.value.trim()));
+      binSaveBtn.addEventListener('click', () => saveLocationField(loc, { cin7_bin: binInput.value.trim() }));
       binCell.appendChild(binInput);
       binCell.appendChild(document.createTextNode(' '));
       binCell.appendChild(binSaveBtn);
 
-      const assignCell = tr.querySelectorAll('td.narrow')[1];
+      // Bay code -- groups several shelf-level locations under one
+      // parent bay, so a wrong-shelf-right-bay Putaway scan always just
+      // warns regardless of the strict/lenient setting above. Same
+      // inline-editable pattern as Cin7 Bin.
+      const bayCell = tr.querySelectorAll('td.narrow')[1];
+      const bayInput = document.createElement('input');
+      bayInput.type = 'text';
+      bayInput.placeholder = 'Bay code';
+      bayInput.value = loc.bay_code || '';
+      bayInput.style.width = '110px';
+      bayInput.style.display = 'inline-block';
+      const baySaveBtn = document.createElement('button');
+      baySaveBtn.className = 'btn-link';
+      baySaveBtn.textContent = 'Save';
+      baySaveBtn.addEventListener('click', () => saveLocationField(loc, { bay_code: bayInput.value.trim() }));
+      bayCell.appendChild(bayInput);
+      bayCell.appendChild(document.createTextNode(' '));
+      bayCell.appendChild(baySaveBtn);
+
+      const assignCell = tr.querySelectorAll('td.narrow')[2];
       const skuInput = document.createElement('input');
       skuInput.type = 'text';
       skuInput.placeholder = 'SKU';
@@ -431,7 +479,7 @@ async function loadLocations() {
       assignCell.appendChild(document.createTextNode(' '));
       assignCell.appendChild(assignBtn);
 
-      const labelCell = tr.querySelectorAll('td.narrow')[2];
+      const labelCell = tr.querySelectorAll('td.narrow')[3];
       const labelBtn = document.createElement('button');
       labelBtn.className = 'btn-link';
       labelBtn.textContent = 'Print';
@@ -450,17 +498,22 @@ async function addLocation() {
   const description = document.getElementById('new-location-description').value.trim();
   const stockType = document.getElementById('new-location-stock-type').value;
   const cin7Bin = document.getElementById('new-location-cin7-bin').value.trim();
+  const bayCode = document.getElementById('new-location-bay-code').value.trim();
   if (!code) { setError('Enter a location code first.'); return; }
   setError('');
   try {
     await api('/production/warehouse/locations', {
       method: 'POST',
-      body: JSON.stringify({ code, description: description || null, stock_type: stockType || null, cin7_bin: cin7Bin || null }),
+      body: JSON.stringify({
+        code, description: description || null, stock_type: stockType || null,
+        cin7_bin: cin7Bin || null, bay_code: bayCode || null,
+      }),
     });
     document.getElementById('new-location-code').value = '';
     document.getElementById('new-location-description').value = '';
     document.getElementById('new-location-stock-type').value = '';
     document.getElementById('new-location-cin7-bin').value = '';
+    document.getElementById('new-location-bay-code').value = '';
     setSuccess(`Added location ${code}.`);
     await loadLocations();
   } catch (err) {
@@ -469,20 +522,22 @@ async function addLocation() {
 }
 
 // Re-posts the same location code (POST is upsert-on-code, see the
-// backend route) with just cin7_bin changed -- the quick path for
-// linking a bin to an area created before its matching Cin7 Bin
-// existed, without re-typing description/stock_type.
-async function saveLocationCin7Bin(loc, cin7Bin) {
+// backend route) with just the given field(s) patched in -- the quick
+// path for filling in Cin7 Bin or Bay code on an area created before
+// either existed, without re-typing description/stock_type. `patch` is
+// e.g. { cin7_bin: 'Stockroom - Main' } or { bay_code: 'SRM-B1' }.
+async function saveLocationField(loc, patch) {
   setError('');
   try {
     await api('/production/warehouse/locations', {
       method: 'POST',
       body: JSON.stringify({
         code: loc.code, description: loc.description, stock_type: loc.stock_type,
-        cin7_bin: cin7Bin || null,
+        cin7_bin: loc.cin7_bin, bay_code: loc.bay_code,
+        ...Object.fromEntries(Object.entries(patch).map(([k, v]) => [k, v || null])),
       }),
     });
-    setSuccess(`Updated Cin7 Bin for ${loc.code}.`);
+    setSuccess(`Updated ${loc.code}.`);
     await loadLocations();
   } catch (err) {
     setError(err.message);
@@ -539,6 +594,7 @@ document.getElementById('refresh-targets-btn').addEventListener('click', loadTar
 document.getElementById('refresh-batches-btn').addEventListener('click', loadBatches);
 document.getElementById('refresh-stocktake-btn').addEventListener('click', loadStocktake);
 document.getElementById('save-stocktake-number-btn').addEventListener('click', saveStocktakeNumber);
+document.getElementById('save-putaway-mismatch-mode-btn').addEventListener('click', savePutawayMismatchMode);
 document.getElementById('sync-stocktake-btn').addEventListener('click', syncStocktakeTotals);
 document.getElementById('refresh-locations-btn').addEventListener('click', loadLocations);
 document.getElementById('locations-filter').addEventListener('change', loadLocations);
@@ -585,6 +641,7 @@ function enterAdmin() {
   loadBatches();
   loadStocktake();
   loadActiveStocktakeNumber();
+  loadPutawayMismatchMode();
   loadLocations();
   loadPutawayScans();
 }

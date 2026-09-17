@@ -158,6 +158,21 @@
         </p>
 
         <div class="admin-toolbar">
+          <label for="putaway-mismatch-mode-select" class="sub">When a Putaway scan lands in the WRONG BAY:</label>
+          <select id="putaway-mismatch-mode-select">
+            <option value="warn">Warn -- staff can continue anyway</option>
+            <option value="block">Block -- staff must rescan until it matches</option>
+          </select>
+          <button class="btn-secondary" id="save-putaway-mismatch-mode-btn">Save</button>
+        </div>
+        <p class="sub">
+          Only applies to a wrong-bay mismatch. A wrong-shelf-but-right-bay
+          scan (needs a matching Bay code set on both locations) always
+          just warns, staff can continue -- close enough.
+        </p>
+        <p class="sub" id="putaway-mismatch-mode-status"></p>
+
+        <div class="admin-toolbar">
           <input type="text" id="new-location-code" placeholder="Location code, e.g. RM-A1" style="max-width:150px;">
           <input type="text" id="new-location-description" placeholder="Description (optional)" style="max-width:200px;">
           <select id="new-location-stock-type">
@@ -167,6 +182,7 @@
             <option value="FP">FP</option>
           </select>
           <input type="text" id="new-location-cin7-bin" placeholder="Cin7 Bin (optional)" style="max-width:160px;">
+          <input type="text" id="new-location-bay-code" placeholder="Bay code (optional)" style="max-width:150px;">
           <button class="btn-primary" id="add-location-btn">Add location</button>
         </div>
         <p class="sub">
@@ -175,6 +191,10 @@
           "Shonrei factory/main warehouse" Location. Once set, a
           stocktake count logged against this area pushes straight to
           that bin in Cin7 -- see production/README.md.
+          Bay code: shared by every shelf in the same bay (e.g.
+          SRM-B1-04 and SRM-B1-07 both get "SRM-B1") -- lets a
+          wrong-shelf-right-bay Putaway scan always just warn, instead
+          of following the strict setting above.
         </p>
 
         <div class="admin-toolbar">
@@ -190,7 +210,7 @@
 
         <table class="overrides-table" id="locations-table">
           <thead>
-            <tr><th>Code</th><th>Type</th><th>Description</th><th>Cin7 Bin</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
+            <tr><th>Code</th><th>Type</th><th>Description</th><th>Cin7 Bin</th><th>Bay code</th><th>SKUs here</th><th>Assign SKU</th><th>Label</th></tr>
           </thead>
           <tbody id="locations-tbody"></tbody>
         </table>

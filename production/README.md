@@ -462,6 +462,40 @@ fresh each time -- solves the same problem but needs new label
 generation and physical printing per carton, when the app already has
 the answer and can just say so on screen for free.
 
+**A SKU's home location IS printed in plain text on its own product
+label** (2026-09-17, `labels.sku_label_zpl`'s `home_location_code`
+param, large font, not a barcode) -- a fallback for whoever's carrying
+the carton without the floor app open, or without a device at all.
+Confirmed as a deliberate trade-off: it's a snapshot from whenever the
+label was printed, not live -- if a SKU's home location changes later,
+an already-printed label goes stale, same as any printed text would.
+That's fine, because it's not the thing that actually verifies
+placement -- the scan-and-confirm step is. `GET /labels/sku/:sku`
+(refresh-service) looks this up itself before rendering.
+
+**Same-bay vs different-bay mismatches are treated differently
+(2026-09-17):** `warehouse.locations.bay_code` (migration 016) groups
+several shelf-level locations under one parent bay -- e.g. `SRM-B1-04`
+and `SRM-B1-07` both get `bay_code = 'SRM-B1'`. A Putaway scan that
+lands in the SAME bay as the SKU's assigned home (wrong shelf, right
+bay) ALWAYS just warns -- close enough, staff can continue immediately,
+regardless of any setting. A scan that lands in a genuinely DIFFERENT
+bay respects the admin-configured `warehouse.settings.
+putaway_mismatch_mode` (migration 015, 'warn' default or 'block'):
+'block' refuses to show a "done" screen until a scan actually matches
+(each attempt is still logged either way -- `warehouse.putaway_scans`
+keeps recording every scan regardless of outcome, "mismatches are the
+whole point" of logging still holds, see migration 010). An
+unrecognised scanned code, or a location missing its `bay_code`, is
+always treated as a DIFFERENT bay -- the cautious default when same-bay
+genuinely can't be determined, never waved through just because we
+can't prove otherwise. Pure classification logic in
+`production/planner/putaway.py`'s `check_putaway` (unit tested);
+`warehouse.record_putaway_scan` combines that with the admin setting
+into a single `action` field (`match`/`no_home`/`warn`/`block`) the
+floor app branches its UI on directly, so the decision logic lives in
+one place, not duplicated in JS.
+
 **Verified locally, real HTTP, real Postgres:** generated real ZPL for
 all three label types, confirmed a shared shelf assigned to two
 different SKUs prints a label with only the location barcode and its
