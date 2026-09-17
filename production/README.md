@@ -443,6 +443,25 @@ of scanning in the first place. `warehouse.locations.stock_type`
 convention baked into location codes -- the admin screen's WAREHOUSE
 LOCATIONS table can filter to just one type.
 
+**Tell staff where to go BEFORE they walk off, not just after they
+guess wrong (2026-09-17):** the app already knows a SKU's assigned home
+location the instant its barcode is scanned (`warehouse.sku_locations`)
+-- no need for a printed second barcode on the carton, or for staff to
+find out they're at the wrong shelf only after already scanning it.
+`GET /production/warehouse/sku-locations/:sku` (floor-accessible, a
+plain read -- no scan recorded) surfaces just that lookup, and the
+Putaway tab now calls it the moment the SKU step advances, showing
+"Belongs at: <code>" right there on screen before the location-scan
+input even appears. The scan-and-confirm step immediately after is
+unchanged and still the real check -- this is a heads-up, not a
+replacement for verifying where the carton actually landed; a stale or
+wrong expectation still gets caught the same way it always did.
+Considered (and dropped in favour of this): printing a second,
+location-encoding barcode onto the carton at putaway time, generated
+fresh each time -- solves the same problem but needs new label
+generation and physical printing per carton, when the app already has
+the answer and can just say so on screen for free.
+
 **Verified locally, real HTTP, real Postgres:** generated real ZPL for
 all three label types, confirmed a shared shelf assigned to two
 different SKUs prints a label with only the location barcode and its

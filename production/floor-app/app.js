@@ -483,7 +483,7 @@ document.getElementById('paLocationSubmitBtn').addEventListener('click', submitP
 paLocationInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitPutawayScan(); } });
 paAgainBtn.addEventListener('click', resetToPaScan);
 
-function goToPaLocationStep() {
+async function goToPaLocationStep() {
   const sku = paSkuInput.value.trim();
   if (!sku) return;
   paSku = sku;
@@ -491,8 +491,26 @@ function goToPaLocationStep() {
   paSkuStep.hidden = true;
   paLocationStep.hidden = false;
   paLocationInput.value = '';
-  paLocationInput.focus();
   paAgainBtn.hidden = false;
+
+  // Tell staff where this SKU actually belongs BEFORE they go looking for
+  // a shelf -- the app already knows this from warehouse.sku_locations,
+  // no need to make them walk to a shelf and scan before finding out
+  // they're in the wrong place. The scan-and-confirm step right after
+  // this still happens regardless -- this is a heads-up, not a
+  // replacement for verifying where the carton actually landed.
+  const homeLine = document.getElementById('paHomeLocationLine');
+  homeLine.textContent = 'Looking up home location...';
+  try {
+    const data = await apiFetch(`/production/warehouse/sku-locations/${encodeURIComponent(sku)}`);
+    homeLine.textContent = data.location
+      ? `Belongs at: ${data.location.location_code}${data.location.location_description ? ` (${data.location.location_description})` : ''}`
+      : 'No home location set yet for this SKU -- scan wherever it lands, ask admin to assign one.';
+  } catch (err) {
+    homeLine.textContent = '';
+  }
+
+  paLocationInput.focus();
 }
 
 async function submitPutawayScan() {

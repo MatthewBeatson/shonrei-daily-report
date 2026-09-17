@@ -421,6 +421,25 @@ router.put('/warehouse/sku-locations/:sku', requireProductionEdit, asyncHandler(
   res.status(200).json(data);
 }));
 
+// Floor: "where does this SKU live" -- looked up and shown on-screen
+// right after scanning the SKU in Putaway, BEFORE staff go looking for
+// a shelf, rather than only ever revealed as a "wrong bin" message after
+// the fact. Same lookup record_putaway_scan already does internally
+// (warehouse.py), exposed here as its own read so the floor app can show
+// it proactively without recording a scan. Direct Postgres read, no
+// Cin7/business-logic involved -- same pattern as GET /warehouse/locations
+// above, not proxied through refresh-service.
+router.get('/warehouse/sku-locations/:sku', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    `select l.code as location_code, l.description as location_description
+     from warehouse.sku_locations sl
+     join warehouse.locations l on l.id = sl.location_id
+     where sl.sku = $1`,
+    [req.params.sku]
+  );
+  res.json({ sku: req.params.sku, location: rows[0] || null });
+}));
+
 router.get('/warehouse/putaway-scans', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, scanned_location_code, matched, scanned_by, scanned_at,
