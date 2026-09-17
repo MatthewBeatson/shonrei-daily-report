@@ -552,6 +552,44 @@ printing its start label** (today `split_into_batches` sets it once, at
 planning time, with no edit step) -- flagged, deliberately deferred
 rather than bundled into this label-content change.
 
+### Progressive location rollout + Cin7 DefaultLocation push (2026-09-17)
+
+Confirmed design: Shonrei doesn't have home locations set against
+products yet, so this needs to be a "work through the catalogue over
+time" tool, not an all-or-nothing migration. Admin app's WAREHOUSE
+LOCATIONS section gained a search-SKU-first flow (separate from the
+existing per-location "Assign SKU" field): type a SKU, pick its
+location from a dropdown of everything already set up, Save -- assigns
+it in the app (same `PUT /warehouse/sku-locations/:sku` the older
+per-location flow already used) and shows a **Print label** button
+straight after, so assign-then-print happens without retyping the SKU.
+
+**Also pushes the same location to Cin7's own product `DefaultLocation`
+field** -- confirmed intent: assigning a home location in our app should
+update Cin7's product record too, not just our DB, so Cin7 itself shows
+"where does this live." `warehouse.set_home_location` takes an optional
+`cin7` client and calls `cin7.update_product_default_location(sku,
+cin7_bin)` best-effort (a failure is logged and reported back, never
+rolls back or blocks the local assignment -- same "logging always wins"
+philosophy as `record_count`'s snapshot lookup). **Still dry-run**:
+nothing in this repo has ever attempted a Cin7 *product* write before
+(only `GET /product` is confirmed) -- `Cin7Client.update_product_
+default_location` deliberately raises `NotImplementedError` rather than
+guessing at the real request shape; `DryRunCin7Client`'s version just
+logs, so the DB-assignment + label-printing parts of this feature are
+fully usable today regardless. `scripts/probe_product_default_location_
+write.py` exists to confirm the real shape live -- not yet run/confirmed
+as of this writing. Wire the real method up once that script confirms
+what Cin7 actually accepts; nothing else about this feature needs to
+change when that happens.
+
+**Temporary access for a rollout helper**: no new permission tier built
+for this -- confirmed as unnecessary complexity for now. Toggle an
+existing `production.production_users.can_edit` row on for the task
+window via `scripts/create_production_users.py`, off again afterward.
+They'd have full admin edit rights during that window (not scoped to
+just this screen), an accepted trade-off for how rarely this comes up.
+
 ## Live concept -- what actually runs today
 
 To get something real running with minimal new setup, the concept

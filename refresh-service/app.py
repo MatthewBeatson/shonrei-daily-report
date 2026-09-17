@@ -448,7 +448,10 @@ def warehouse_set_putaway_mismatch_mode():
 @app.put('/warehouse/sku-locations/<path:sku>')
 def warehouse_set_home_location(sku):
     """Body: {"location_code"}. Assigns (or reassigns) a SKU's home
-    location -- what a putaway scan is checked against.
+    location -- what a putaway scan is checked against -- and also
+    pushes it as Cin7's own product DefaultLocation (best-effort, see
+    warehouse.set_home_location's docstring; dry-run today, same as
+    every other Cin7 write on this service).
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -461,7 +464,7 @@ def warehouse_set_home_location(sku):
     conn = get_conn()
     try:
         try:
-            result = set_home_location(conn, sku, location_code)
+            result = set_home_location(conn, sku, location_code, cin7=DryRunCin7Client(conn))
         except WarehouseError as exc:
             conn.rollback()
             return jsonify({'error': str(exc)}), 400

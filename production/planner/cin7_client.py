@@ -907,3 +907,25 @@ class Cin7Client:
         )
         self._raise_for_status_with_body(resp)
         return resp.json().get("StockAdjustmentList") or []
+
+    def update_product_default_location(self, sku: str, location_code: str) -> None:
+        """Push `location_code` as Cin7's own product `DefaultLocation`
+        field -- confirmed design, 2026-09-17: assigning a SKU's home
+        location in our own app should also update Cin7's product record,
+        not just our DB, so Cin7 itself shows "where does this live."
+
+        NOT YET CONFIRMED. Nothing in this file has ever attempted a
+        Cin7 product WRITE before -- only GET /product is confirmed.
+        `scripts/probe_product_default_location_write.py` exists to
+        confirm the real request shape live; deliberately raises here
+        rather than guessing at it, same discipline as everywhere else
+        in this file. Implement this for real once that script confirms
+        what Cin7 actually accepts (DryRunCin7Client already implements
+        a logging version, so the rest of the "assign home location"
+        flow works today without this).
+        """
+        raise NotImplementedError(
+            "update_product_default_location is unconfirmed -- run "
+            "scripts/probe_product_default_location_write.py against a real SKU first, "
+            "then implement this against whatever it confirms Cin7 actually accepts."
+        )

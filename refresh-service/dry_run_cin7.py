@@ -85,3 +85,11 @@ class DryRunCin7Client:
     def get_open_stock_adjustments(self) -> list:
         self._log('get_open_stock_adjustments')
         return []
+
+    def update_product_default_location(self, sku: str, location_code: str) -> None:
+        # Real Cin7Client raises NotImplementedError here -- the request
+        # shape isn't confirmed live yet (scripts/probe_product_default_
+        # location_write.py). Dry-run just logs so the rest of the
+        # "assign a SKU's home location" flow (DB write + label print)
+        # is fully usable today without waiting on that confirmation.
+        self._log('update_product_default_location', sku=sku, location_code=location_code)

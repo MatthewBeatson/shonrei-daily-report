@@ -403,6 +403,24 @@ async function savePutawayMismatchMode() {
 
 // -- Warehouse locations -----------------------------------------------
 
+// Unfiltered, separate from loadLocations' own (possibly stock-type-
+// filtered) fetch -- the "assign a product's home location" dropdown
+// should always offer every location regardless of what the table above
+// is currently filtered to.
+async function loadAssignLocationOptions() {
+  const select = document.getElementById('assign-loc-location-select');
+  const previousValue = select.value;
+  try {
+    const { locations } = await api('/production/warehouse/locations');
+    select.innerHTML = '<option value="">Location...</option>' + locations.map(
+      (loc) => `<option value="${escapeHtml(loc.code)}">${escapeHtml(loc.code)}${loc.description ? ` -- ${escapeHtml(loc.description)}` : ''}</option>`
+    ).join('');
+    select.value = previousValue;
+  } catch (err) {
+    if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
 async function loadLocations() {
   const tbody = document.getElementById('locations-tbody');
   const empty = document.getElementById('locations-empty');
@@ -412,6 +430,7 @@ async function loadLocations() {
     const { locations } = await api(`/production/warehouse/locations${qs}`);
     tbody.innerHTML = '';
     empty.hidden = locations.length > 0;
+    loadAssignLocationOptions();
     for (const loc of locations) {
       const tr = document.createElement('tr');
       const skusText = loc.current_skus && loc.current_skus.length ? loc.current_skus.join(', ') : '—';
@@ -559,6 +578,41 @@ async function assignSkuLocation(sku, locationCode) {
   }
 }
 
+// Search-SKU-first version of the same assignment, for progressively
+// rolling locations out across the product catalogue -- same backend
+// call as assignSkuLocation above (also pushes Cin7's DefaultLocation,
+// dry-run today), plus a status line reporting whether that push
+// worked, and a "Print label" button so the whole SKU-by-SKU workflow
+// (assign, then print) happens without retyping the SKU.
+async function saveAssignedLocation() {
+  const sku = document.getElementById('assign-loc-sku-input').value.trim();
+  const locationCode = document.getElementById('assign-loc-location-select').value;
+  const statusEl = document.getElementById('assign-loc-status');
+  const printBtn = document.getElementById('assign-loc-print-btn');
+  printBtn.hidden = true;
+  if (!sku) { setError('Enter a SKU first.'); return; }
+  if (!locationCode) { setError('Pick a location first.'); return; }
+  setError('');
+  try {
+    const data = await api(`/production/warehouse/sku-locations/${encodeURIComponent(sku)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ location_code: locationCode }),
+    });
+    let statusText = `${sku}'s home is now ${locationCode}.`;
+    if (data.cin7_default_location_updated === true) {
+      statusText += ' Pushed to Cin7\'s Default Location too.';
+    } else if (data.cin7_default_location_updated === false) {
+      statusText += ` (Cin7 push not applied yet -- ${data.cin7_push_error || 'not confirmed live yet'}.)`;
+    }
+    statusEl.textContent = statusText;
+    setSuccess(statusText);
+    printBtn.hidden = false;
+    printBtn.onclick = () => downloadLabel(`/production/labels/sku/${encodeURIComponent(sku)}`, `sku-${sku}.zpl`);
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
 // -- Putaway scans -------------------------------------------------------
 
 async function loadPutawayScans() {
@@ -602,6 +656,7 @@ document.getElementById('refresh-putaway-btn').addEventListener('click', loadPut
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
 document.getElementById('add-location-btn').addEventListener('click', addLocation);
+document.getElementById('assign-loc-save-btn').addEventListener('click', saveAssignedLocation);
 document.getElementById('download-sku-label-btn').addEventListener('click', () => {
   const sku = document.getElementById('sku-label-input').value.trim();
   if (!sku) { setError('Enter a SKU first.'); return; }

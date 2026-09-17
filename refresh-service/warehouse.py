@@ -127,13 +127,21 @@ def sku_stock_type(conn, sku: str) -> str | None:
     return row[0] if row else None
 
 
-def set_home_location(conn, sku: str, location_code: str) -> dict:
+def set_home_location(conn, sku: str, location_code: str, cin7=None) -> dict:
+    """Assigns (or reassigns) a SKU's home location -- what a Putaway
+    scan is checked against. When `cin7` is given, also pushes the same
+    location as Cin7's own product DefaultLocation (confirmed design,
+    2026-09-17) -- best-effort: a failure there is logged and returned
+    (`cin7_push_error`), never rolls back or blocks the local
+    assignment, same "logging always wins" philosophy as
+    record_count's Cin7 snapshot lookup.
+    """
     with conn.cursor() as cur:
-        cur.execute("select id from warehouse.locations where code = %s", (location_code,))
+        cur.execute("select id, cin7_bin from warehouse.locations where code = %s", (location_code,))
         row = cur.fetchone()
         if row is None:
             raise WarehouseError(f'No such location code: {location_code}')
-        (location_id,) = row
+        location_id, cin7_bin = row
 
         cur.execute(
             """insert into warehouse.sku_locations (sku, location_id)
@@ -144,4 +152,17 @@ def set_home_location(conn, sku: str, location_code: str) -> dict:
         )
         cur.fetchone()
     conn.commit()
-    return {'sku': sku, 'location_code': location_code}
+
+    result = {'sku': sku, 'location_code': location_code}
+    if cin7 is not None and cin7_bin:
+        try:
+            cin7.update_product_default_location(sku, cin7_bin)
+            result['cin7_default_location_updated'] = True
+        except Exception as exc:  # noqa: BLE001 -- best-effort, see docstring
+            print(f'set_home_location: could not push DefaultLocation to Cin7 for {sku!r}: {exc}', flush=True)
+            result['cin7_default_location_updated'] = False
+            result['cin7_push_error'] = str(exc)
+    elif cin7 is not None:
+        result['cin7_default_location_updated'] = False
+        result['cin7_push_error'] = f'Location {location_code!r} has no cin7_bin set yet'
+    return result

@@ -221,6 +221,25 @@
           <input type="text" id="sku-label-input" placeholder="SKU" style="max-width:180px;">
           <button class="btn-primary" id="download-sku-label-btn">Download SKU label</button>
         </div>
+
+        <p class="sub" style="margin-top:16px;">
+          <strong>Assign a product's home location</strong> -- for progressively
+          rolling this out: search a SKU, pick its shelf/bay from the
+          locations already set up above, save. Assigns it in the app
+          (what Putaway checks against) and pushes the same value as
+          Cin7's own product Default Location. Once saved, the SKU's own
+          label already prints that location in large text -- see
+          production/README.md.
+        </p>
+        <div class="admin-toolbar">
+          <input type="text" id="assign-loc-sku-input" placeholder="SKU" style="max-width:180px;">
+          <select id="assign-loc-location-select">
+            <option value="">Location...</option>
+          </select>
+          <button class="btn-primary" id="assign-loc-save-btn">Save</button>
+          <button class="btn-secondary" id="assign-loc-print-btn" hidden>Print label</button>
+        </div>
+        <p class="sub" id="assign-loc-status"></p>
       </div>
     </div>
 
