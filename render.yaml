@@ -61,17 +61,30 @@ services:
       - key: MAIN_APP_URL
         sync: false
 
-  # Always-on Python service that does the actual Xero/Cin7 pulls. Never
-  # exposed to end users -- only shonrei-report-web (on-demand clicks) and
+  # Always-on Python service that does the actual Xero/Cin7 pulls, the
+  # Monthly Dispatch Plan generation, and the whole production/warehouse
+  # platform's backend logic (backorder targets, batches, stocktake,
+  # putaway, labels -- see production/README.md). Never exposed to end
+  # users directly -- only shonrei-report-web (on-demand clicks) and
   # shonrei-report-cron (scheduled) call its POST /refresh, both using the
   # shared secret. Single worker: refresh_state in the DB is used as a
   # lock to stop overlapping runs, which only holds if one process at a
   # time can flip it.
+  #
+  # On the free plan (as it originally was) this comment's "always-on"
+  # claim wasn't actually true -- Render's free web services spin down
+  # after ~15 min idle, and the hourly refresh cron (.github/workflows/
+  # hourly-refresh.yml) doesn't ping often enough to stop that, so
+  # on-demand calls (Dispatch Plan's "Generate now", any production/
+  # floor-app write) would often hit a cold-starting service and time
+  # out with a "couldn't reach the refresh service" error. Upgraded to
+  # Starter (2026-09-17) specifically to fix that -- confirmed live,
+  # service now stays running continuously instead of sleeping.
   - type: web
     name: shonrei-report-refresh
     runtime: python
     rootDir: refresh-service
-    plan: free
+    plan: starter
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 1 --threads 4 --timeout 120 -b 0.0.0.0:$PORT app:app
     healthCheckPath: /health
