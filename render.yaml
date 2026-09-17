@@ -1,12 +1,22 @@
 services:
   # Node/Express API + serves the static frontend (single origin, no CORS
   # needed between them). This is the only service the 6 users' browsers
-  # ever talk to.
+  # ever talk to -- every page (daily report, Dispatch Plan,
+  # production-admin, production-floor) is served by this one service.
+  #
+  # Was 'plan: free' -- Render's free web services spin down after ~15
+  # min idle, so the FIRST page load after any quiet period hit Render's
+  # own generic "waking up" loading screen (confirmed live, 2026-09-17,
+  # /production-admin). Upgraded to Starter in Render's dashboard to fix
+  # that across every page this service serves, same reasoning as
+  # shonrei-report-refresh's own upgrade (which fixes a different
+  # symptom -- broken API calls/buttons once a page is already open, not
+  # the page failing to load in the first place).
   - type: web
     name: shonrei-report-web
     runtime: node
     rootDir: backend
-    plan: free
+    plan: starter
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
