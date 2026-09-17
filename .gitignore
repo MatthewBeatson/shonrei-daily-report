@@ -8,3 +8,4 @@ __pycache__/
 venv/
 *.log
 sample_sale_dump.json
+sample_bom_dump.json
