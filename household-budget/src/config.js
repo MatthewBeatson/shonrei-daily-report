@@ -17,6 +17,10 @@ function int(name, fallback) {
 
 const config = {
   port: int('PORT', 3100),
+  // Only accept connections from this computer by default. Tailscale's
+  // `tailscale serve` forwards to localhost, so it still works. Cloud hosts
+  // (Render etc.) need HOST=0.0.0.0.
+  host: process.env.HOST || '127.0.0.1',
   dbPath: process.env.DB_PATH || path.join(__dirname, '..', 'data', 'budget.db'),
   timezone: 'Pacific/Auckland',
 
@@ -25,6 +29,10 @@ const config = {
   akahuAppToken: process.env.AKAHU_APP_TOKEN || '',
   akahuUserToken: process.env.AKAHU_USER_TOKEN || '',
   akahuBaseUrl: process.env.AKAHU_BASE_URL || 'https://api.akahu.io/v1',
+
+  // Daily database backups (set BACKUP_DIR=off to disable).
+  backupDir: process.env.BACKUP_DIR || path.join(__dirname, '..', 'data', 'backups'),
+  backupKeep: int('BACKUP_KEEP', 14),
 
   syncIntervalMinutes: int('SYNC_INTERVAL_MINUTES', 30),
   syncBackfillDays: int('SYNC_BACKFILL_DAYS', 180),

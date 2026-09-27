@@ -161,3 +161,21 @@ test('mortgage: a revolving split with no set repayment does not make payoff "ne
   assert.ok(s.payoff_date_with_extra < s.payoff_date);
   assert.equal(s.splits_without_repayment, 1);
 });
+
+test('backup: writes a restorable snapshot and keeps only the newest N', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const { DatabaseSync } = require('node:sqlite');
+  const db = require('../src/db');
+  const { runBackup } = require('../src/backup');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hb-backup-'));
+  db.open(':memory:');
+  for (const day of ['2026-09-01', '2026-09-02', '2026-09-03']) runBackup(dir, 2, day);
+  assert.equal(runBackup(dir, 2, '2026-09-03').skipped, true);
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['budget-2026-09-02.db', 'budget-2026-09-03.db']);
+  const copy = new DatabaseSync(path.join(dir, 'budget-2026-09-03.db'));
+  assert.ok(copy.prepare('SELECT COUNT(*) AS n FROM categories').get().n > 30);
+  copy.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});

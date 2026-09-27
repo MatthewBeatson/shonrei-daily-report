@@ -135,27 +135,32 @@ npm run user -- list | remove <name>
 
 ## Deploying
 
-It's a single always-on Node process with a SQLite file, so it needs a host
-with a **persistent disk** and **HTTPS**. Kept separate from the Shonrei
-`render.yaml` on purpose.
+It's a single Node process with a SQLite file, so it needs a computer that
+stays on, somewhere to keep that file, and HTTPS.
 
-**Render** (simplest, ~US$7/month -- disks need a paid plan):
+**Recommended: a home computer + Tailscale (free).** It's not exposed to the
+internet at all; only your own devices can reach it. Step-by-step guide for
+Windows and Mac, including auto-start and phone access:
+**[docs/HOME-SETUP.md](docs/HOME-SETUP.md)**.
+
+By default the app only accepts connections from the computer it runs on
+(`HOST=127.0.0.1`) and backs itself up daily to `data/backups/` (last 14
+kept).
+
+**Cloud alternative (Render, ~US$7/month -- disks need a paid plan):**
 1. New -> **Web Service** -> this repo. Root directory `household-budget`,
    build `npm install`, start `npm start`, plan Starter, health check `/health`.
 2. **Disks** -> add a 1 GB disk mounted at `/var/data`.
-3. Environment: `DB_PATH=/var/data/budget.db`, `AKAHU_APP_TOKEN`,
-   `AKAHU_USER_TOKEN` (and any of the other settings in `.env.example`).
+3. Environment: `HOST=0.0.0.0`, `DB_PATH=/var/data/budget.db`,
+   `BACKUP_DIR=/var/data/backups`, `AKAHU_APP_TOKEN`, `AKAHU_USER_TOKEN`.
 4. Deploy, then open the service's **Shell** and run
    `npm run user -- add <name>` for each person.
-
-Any VPS, Fly.io (with a volume) or a home server behind Cloudflare Tunnel
-works the same way. Back up the database file (e.g. nightly copy of
-`budget.db` to encrypted storage) -- it's the only state.
 
 ## Layout
 
 ```
-src/server.js        entry point: opens DB, starts HTTP + background sync
+src/server.js        entry point: opens DB, starts HTTP, background sync + daily backup
+src/backup.js        daily database snapshots
 src/app.js           Express app, security headers, auth wiring
 src/auth.js          passwords, TOTP, sessions, lockout, CSRF
 src/db.js            SQLite schema + default NZ household categories
@@ -167,6 +172,8 @@ src/mortgage.js      amortisation / payoff projections
 src/csv-import.js    ANZ + ASB CSV parsing
 src/routes/api.js    REST API
 src/cli.js           user admin
+scripts/             auto-start helpers for Windows / Mac
+docs/HOME-SETUP.md   home-computer setup guide
 public/              the web app (plain HTML/CSS/JS, no build step)
 test/                node:test unit + end-to-end API tests
 ```
