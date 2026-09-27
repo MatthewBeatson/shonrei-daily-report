@@ -1,0 +1,20 @@
+{
+  "name": "household-budget",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Household budgeting app -- syncs ANZ + ASB via Akahu, auto-codes transactions, monthly periods, mortgage tracking",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "user": "node --disable-warning=ExperimentalWarning src/cli.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

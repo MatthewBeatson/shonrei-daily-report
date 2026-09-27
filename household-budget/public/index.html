@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Household Budget</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Cpath d='M8 17l8-7 8 7v8H8z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="card login-card" autocomplete="on">
+      <h1>Household Budget</h1>
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <label>Authenticator code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <p class="error" id="login-error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="shell" hidden>
+    <header class="topbar">
+      <div class="brand">Household Budget</div>
+      <nav id="nav">
+        <a href="#/">Overview</a>
+        <a href="#/transactions">Transactions <span id="review-badge" class="badge" hidden></span></a>
+        <a href="#/budgets">Budgets</a>
+        <a href="#/rules">Rules</a>
+        <a href="#/mortgage">Mortgage</a>
+        <a href="#/settings">Settings</a>
+      </nav>
+      <div class="sync">
+        <span id="sync-status" class="muted small"></span>
+        <button id="sync-btn" class="btn small" type="button">Sync</button>
+      </div>
+    </header>
+    <main id="view" tabindex="-1"></main>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <dialog id="dialog">
+    <form method="dialog" id="dialog-form"></form>
+  </dialog>
+</body>
+</html>
