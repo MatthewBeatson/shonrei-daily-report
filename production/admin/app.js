@@ -141,11 +141,13 @@ async function loadTargets() {
     empty.hidden = targets.length > 0;
     for (const t of targets) {
       const tr = document.createElement('tr');
+      tr.dataset.sku = t.sku;
       if (t.status === 'closed') tr.className = 'closed-row';
       tr.innerHTML = `
         <td>${escapeHtml(t.sku)}</td>
         <td><span class="status-pill ${t.status}">${escapeHtml(t.status)}</span></td>
         <td>${escapeHtml(t.outstanding_qty)}</td>
+        <td class="cin7-onhand">&hellip;</td>
         <td>${escapeHtml(t.cin7_assembly_id || '—')}</td>
         <td class="narrow"></td>
       `;
@@ -167,8 +169,29 @@ async function loadTargets() {
       }
       tbody.appendChild(tr);
     }
+    loadCin7OnHandForTargets(targets.map((t) => t.sku));
   } catch (err) {
     if (err.message !== 'Not signed in' && err.message !== 'Session expired') setError(err.message);
+  }
+}
+
+// Real Cin7 on-hand, fetched separately from the (fast, local-only)
+// targets list above -- a real Cin7 call per unique SKU, so it's kept
+// out of the critical path for the table itself even loading. Fills
+// each row's own cell as soon as the batch comes back; a SKU Cin7
+// couldn't resolve, or the whole call failing, shows "--" rather than
+// leaving "..." stuck or blanking the table.
+async function loadCin7OnHandForTargets(skus) {
+  const uniqueSkus = [...new Set(skus)];
+  if (!uniqueSkus.length) return;
+  try {
+    const { on_hand } = await api(`/production/targets/cin7-on-hand?skus=${encodeURIComponent(uniqueSkus.join(','))}`);
+    for (const [sku, qty] of Object.entries(on_hand)) {
+      const row = document.querySelector(`#targets-tbody tr[data-sku="${CSS.escape(sku)}"]`);
+      if (row) row.querySelector('td.cin7-onhand').textContent = qty === null || qty === undefined ? '—' : qty;
+    }
+  } catch (err) {
+    for (const cell of document.querySelectorAll('#targets-tbody td.cin7-onhand')) cell.textContent = '—';
   }
 }
 

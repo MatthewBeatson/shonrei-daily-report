@@ -37,6 +37,7 @@ from warehouse import (
     WarehouseError, record_putaway_scan, set_home_location,
     get_putaway_mismatch_mode, set_putaway_mismatch_mode,
 )
+from cin7_read import get_on_hand_for_skus
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 
 app = Flask(__name__)
@@ -88,6 +89,25 @@ def _run_dispatch_plan_in_background(triggered_by):
         run_dispatch_plan(triggered_by=triggered_by)
     except Exception as exc:  # noqa: BLE001 -- last-resort net, run_dispatch_plan already logs internally
         print(f'Unhandled error during dispatch plan generation: {exc}', flush=True)
+
+
+@app.get('/cin7/on-hand')
+def cin7_on_hand():
+    """Real Cin7 on-hand for the given SKUs -- READ ONLY, and the one
+    route on this whole service that hits real Cin7 rather than
+    DryRunCin7Client (see cin7_read.py). Confirmed live, 2026-09-28 --
+    the first real-Cin7 call the deployed app itself makes, not just a
+    local diagnostic script.
+
+    Query param: skus=SKU1,SKU2,... (comma-separated).
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    skus_param = request.args.get('skus', '')
+    skus = [s.strip() for s in skus_param.split(',') if s.strip()]
+    if not skus:
+        return jsonify({'error': 'skus query param is required (comma-separated)'}), 400
+    return jsonify({'on_hand': get_on_hand_for_skus(skus)}), 200
 
 
 @app.get('/health')
