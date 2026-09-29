@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dispatch KPIs</title>
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#17365D" />
+<link rel="stylesheet" href="/kpi/kpi.css" />
+</head>
+<body>
+
+<div class="gate hidden" id="gate">
+  <form class="card" id="gate-form">
+    <h1>Dispatch KPIs</h1>
+    <p class="sub">Enter the board access code.</p>
+    <input id="gate-code" type="password" autocomplete="off" />
+    <button type="submit" class="primary">Continue</button>
+    <div class="error" id="gate-error"></div>
+  </form>
+</div>
+
+<div class="page hidden" id="page">
+  <header class="topbar">
+    <h1>Dispatch KPIs</h1>
+    <a href="/board/" class="link">Open TV board</a>
+  </header>
+
+  <main>
+    <form class="card" id="pick-form">
+      <h2>SO picking done</h2>
+      <p class="sub">Mark a green sheet as picked. It shows as ticked on the TV board straight away.</p>
+
+      <label for="picker">Picked by</label>
+      <select id="picker" required></select>
+      <div class="add-name hidden" id="add-name">
+        <input id="new-name" placeholder="Your name" maxlength="80" />
+        <button type="button" id="add-name-btn">Add</button>
+      </div>
+
+      <label for="so">Sales order</label>
+      <select id="so"></select>
+      <input id="so-typed" class="hidden" placeholder="Type SO number, e.g. 16633" inputmode="numeric" />
+
+      <button type="submit" class="primary big" id="pick-btn">✓ Picking done</button>
+      <div class="msg" id="pick-msg"></div>
+    </form>
+
+    <section class="card">
+      <h2>Recently picked</h2>
+      <ul class="recent" id="recent"></ul>
+    </section>
+  </main>
+</div>
+
+<script src="/kpi/kpi.js"></script>
+</body>
+</html>

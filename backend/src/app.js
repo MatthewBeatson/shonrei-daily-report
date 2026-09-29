@@ -5,6 +5,7 @@ const reportingRouter = require('./routes/reporting');
 const authRouter = require('./routes/auth');
 const dispatchPlanRouter = require('./routes/dispatch-plan');
 const productionRouter = require('./routes/production');
+const boardRouter = require('./routes/board');
 const { notFoundHandler, errorHandler } = require('./middleware/errorHandler');
 
 const FRONTEND_DIR = path.join(__dirname, '../../frontend');
@@ -63,6 +64,10 @@ function buildMainApp() {
   app.use('/reporting/dispatch-plan', dispatchPlanRouter);
   app.use('/auth', authRouter);
   app.use('/production', productionRouter);
+  // Dispatch Board: TV at /board/, staff KPI entry at /kpi/ (both plain
+  // static pages under frontend/, served by express.static below). Own
+  // access code, no report_users login -- see routes/board.js.
+  app.use('/board/api', boardRouter);
 
   // Old paths, kept working for anyone with an existing bookmark --
   // superseded by the dedicated production.* host below once that's set

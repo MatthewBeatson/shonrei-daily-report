@@ -120,8 +120,9 @@ def save_cin7_cache_row(conn, sale_id, record):
             insert into reporting.cin7_sale_cache
               (sale_id, signature, base_value, customer_value, rate, order_before_tax,
                invoiced_before_tax, credited_before_tax, order_number, status, order_status,
-               invoice_status, cached_at)
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+               invoice_status, units_ordered, units_invoiced, line_count, sku_remaining,
+               charge_descriptions, cached_at)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
             on conflict (sale_id) do update set
               signature = excluded.signature, base_value = excluded.base_value,
               customer_value = excluded.customer_value, rate = excluded.rate,
@@ -130,14 +131,69 @@ def save_cin7_cache_row(conn, sale_id, record):
               credited_before_tax = excluded.credited_before_tax,
               order_number = excluded.order_number, status = excluded.status,
               order_status = excluded.order_status, invoice_status = excluded.invoice_status,
+              units_ordered = excluded.units_ordered, units_invoiced = excluded.units_invoiced,
+              line_count = excluded.line_count, sku_remaining = excluded.sku_remaining,
+              charge_descriptions = excluded.charge_descriptions,
               cached_at = now()
             """,
             (sale_id, record['signature'], record['base_value'], record['customer_value'],
              record['rate'], record['order_before_tax'], record['invoiced_before_tax'],
              record['credited_before_tax'], record['order_number'], record['status'],
-             record['order_status'], record['invoice_status']),
+             record['order_status'], record['invoice_status'], record.get('units_ordered'),
+             record.get('units_invoiced'), record.get('line_count'),
+             psycopg2.extras.Json(record['sku_remaining']) if record.get('sku_remaining') is not None else None,
+             record.get('charge_descriptions')),
         )
     conn.commit()
+
+
+def sale_board_facts(detail, invoice_nodes):
+    """Dollar-free facts about one Cin7 sale detail, for the Dispatch Board:
+    units ordered/invoiced, line count, {SKU: ordered minus invoiced qty},
+    and the additional-charge descriptions (how printed packaging is
+    spotted -- e.g. "Printed Lining ($0.48 per box)"). Field names
+    confirmed against live open sales 2026-09-30: Order.Lines[].SKU/
+    Quantity, Invoices[].Lines[].SKU/Quantity, Order.AdditionalCharges[].
+    Description. Only AUTHORISED/PAID invoices count, same rule as
+    invoiced_before_tax."""
+    order = detail.get('Order') or {}
+    order_lines = [l for l in (order.get('Lines') or []) if isinstance(l, dict)]
+    invoice_lines = [
+        l
+        for doc in invoice_nodes
+        if isinstance(doc, dict) and norm(doc.get('Status')) in {'AUTHORISED', 'PAID'}
+        for l in (doc.get('Lines') or []) if isinstance(l, dict)
+    ]
+    sku_remaining = {}
+    for l in order_lines:
+        sku = str(l.get('SKU') or '').strip()
+        sku_remaining[sku] = sku_remaining.get(sku, 0.0) + num(l.get('Quantity'))
+    for l in invoice_lines:
+        sku = str(l.get('SKU') or '').strip()
+        sku_remaining[sku] = sku_remaining.get(sku, 0.0) - num(l.get('Quantity'))
+    return {
+        'units_ordered': sum(num(l.get('Quantity')) for l in order_lines),
+        'units_invoiced': sum(num(l.get('Quantity')) for l in invoice_lines),
+        'line_count': len(order_lines),
+        'sku_remaining': sku_remaining,
+        'charge_descriptions': [
+            str(c.get('Description') or '') for c in (order.get('AdditionalCharges') or []) if isinstance(c, dict)
+        ],
+    }
+
+
+def board_facts_from_cache(cached):
+    """sale_board_facts()'s shape, rebuilt from a cin7_sale_cache row -- or
+    None when the row predates those columns (caller refetches)."""
+    if not cached or cached.get('sku_remaining') is None:
+        return None
+    return {
+        'units_ordered': num(cached.get('units_ordered')),
+        'units_invoiced': num(cached.get('units_invoiced')),
+        'line_count': int(cached.get('line_count') or 0),
+        'sku_remaining': {k: num(v) for k, v in (cached.get('sku_remaining') or {}).items()},
+        'charge_descriptions': list(cached.get('charge_descriptions') or []),
+    }
 
 
 def cin7_list_signature(s):
@@ -418,12 +474,16 @@ def cin7_sales(conn, cfg):
     fetched = 0
     reused = 0
     print(f'Cin7: {len(candidates)} qualifying sales found; checking cache...', flush=True)
+    board_candidates = []
 
     for index, s in enumerate(candidates, start=1):
         sale_id = s['_SaleID']
         signature = s['_Signature']
         cached = load_cin7_cache_row(conn, sale_id)
-        if cached and cached.get('signature') == signature and cached.get('base_value') is not None:
+        facts = board_facts_from_cache(cached)
+        # facts is None on rows cached before the Dispatch Board existed --
+        # refetched once so the board's packaging lists aren't missing them.
+        if cached and cached.get('signature') == signature and cached.get('base_value') is not None and facts:
             base_value = num(cached.get('base_value'))
             customer_value = num(cached.get('customer_value'))
             rate = num(cached.get('rate')) or 1.0
@@ -460,6 +520,7 @@ def cin7_sales(conn, cfg):
             customer_value = max(0.0, order_before_tax - invoiced_before_tax + credited_before_tax)
             rate = num(detail.get('CurrencyRate')) or 1.0
             base_value = customer_value * rate
+            facts = sale_board_facts(detail, invoice_nodes)
             fetched += 1
             if fetched == 1 or fetched % 10 == 0:
                 print(f'Cin7: downloaded {fetched} changed/new sale details; {index}/{len(candidates)} checked...', flush=True)
@@ -471,12 +532,23 @@ def cin7_sales(conn, cfg):
             'credited_before_tax': credited_before_tax, 'order_number': s.get('OrderNumber'),
             'status': s.get('Status'), 'order_status': s.get('OrderStatus'),
             'invoice_status': s.get('_EffectiveInvoiceStatus'),
+            **facts,
         }
         save_cin7_cache_row(conn, sale_id, record)
+        board_candidates.append((s, facts))
         included.append((s.get('OrderNumber'), s.get('OrderStatus'), s.get('_EffectiveInvoiceStatus'),
                           customer_value, rate, base_value, order_before_tax, invoiced_before_tax, credited_before_tax))
 
     print(f'Cin7: cache complete - {reused} reused, {fetched} downloaded.', flush=True)
+
+    # Dispatch Board packaging lists (no $). Never allowed to fail the
+    # daily figures -- a problem here is logged and the refresh carries on.
+    try:
+        from board_packaging import write_packaging_orders
+        write_packaging_orders(conn, cfg, board_candidates)
+    except Exception as exc:  # noqa: BLE001
+        conn.rollback()
+        print(f'Dispatch Board packaging list update failed: {exc}', flush=True)
     included.insert(0, ('FILTER', f'Order date on/after {cutoff_date.isoformat()}',
                          f'cache reused={reused}; fetched={fetched}', 0, 1, 0, 0, 0, excluded_old))
     return total_base, included
