@@ -41,10 +41,13 @@
   let reader = null;
   let stream = null;
   let stopped = true;
+  let paused = false;
   let attempts = 0;
+  let currentTargetInput = null;
 
   function stopScan() {
     stopped = true;
+    paused = false;
     if (stream) {
       stream.getTracks().forEach((t) => t.stop());
       stream = null;
@@ -91,6 +94,15 @@
   // running loop/reader state".
   debugBtn.addEventListener('click', async () => {
     if (stopped || !video.videoWidth) return;
+    // Pause the live loop FIRST -- it was still running in the
+    // background this whole time and overwriting this handler's own
+    // status text within ~120ms (the tick loop's own reschedule delay),
+    // before it could ever be read or screenshotted. Confirmed live,
+    // 2026-09-29: every debug screenshot sent back showed the ordinary
+    // live-scan "frames checked" text, never an actual debug result,
+    // because of exactly this.
+    paused = true;
+
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -110,6 +122,8 @@
     frozenFrame.onclick = () => {
       frozenFrame.hidden = true;
       video.hidden = false;
+      paused = false;
+      tick(currentTargetInput);
     };
   });
 
@@ -131,7 +145,7 @@
   }
 
   async function tick(targetInput) {
-    if (stopped) return;
+    if (stopped || paused) return;
     attempts += 1;
 
     try {
@@ -158,7 +172,7 @@
       // Same as above -- just means this rotation didn't match either.
     }
 
-    if (stopped) return;
+    if (stopped || paused) return;
     status.textContent = `Point the camera at a barcode or QR code, filling most of the frame (tap the picture if it looks blurry)... (${attempts} frames checked, ${video.videoWidth}x${video.videoHeight})`;
     setTimeout(() => tick(targetInput), 120);
   }
@@ -180,7 +194,9 @@
     }
     stopScan(); // in case a previous scan is somehow still active
     stopped = false;
+    paused = false;
     attempts = 0;
+    currentTargetInput = targetInput;
     modal.hidden = false;
     status.textContent = 'Starting camera...';
     reader = makeReader();
