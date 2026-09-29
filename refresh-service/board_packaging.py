@@ -12,7 +12,10 @@ lists of their own:
 board_packaging_sku_prefixes (default 'K' -- Matthew's call 2026-09-30:
 ~98% of K SKUs are packaging, easier than product categories). "Printed" =
 any Order.AdditionalCharges[].Description containing one of
-board_printing_charge_keywords (default 'PRINT'). Both, and the two lead
+board_printing_charge_keywords (default 'PRINT'). SKUs starting with one
+of board_packaging_sku_exclusions (default 'KS312' -- made in-house at
+Shonrei, so standard 20-working-day plan lead time, Matthew's call
+2026-09-30) never count as packaging. All of these, and the two lead
 times, live in reporting.settings so they can change without a deploy.
 
 Rewritten on every hourly refresh (called from daily_refresh_supabase.
@@ -35,6 +38,9 @@ def _split(v) -> list[str]:
 def rules_from_settings(cfg: dict) -> dict:
     return {
         'prefixes': tuple(_split(cfg.get('board_packaging_sku_prefixes')) or ['K']),
+        # None (setting absent) -> default; '' (cleared on purpose) -> no exclusions.
+        'exclude': tuple(_split('KS312' if cfg.get('board_packaging_sku_exclusions') is None
+                                else cfg.get('board_packaging_sku_exclusions'))),
         'keywords': _split(cfg.get('board_printing_charge_keywords')) or ['PRINT'],
         'plain_days': int(cfg.get('board_packaging_plain_days') or 1),
         'printed_days': int(cfg.get('board_packaging_printed_days') or 5),
@@ -49,7 +55,8 @@ def classify(facts: dict | None, rules: dict) -> dict | None:
     if not facts:
         return None
     pkg = {sku: qty for sku, qty in (facts.get('sku_remaining') or {}).items()
-           if sku.upper().startswith(rules['prefixes'])}
+           if sku.upper().startswith(rules['prefixes'])
+           and not (rules['exclude'] and sku.upper().startswith(rules['exclude']))}
     units = sum(max(0.0, q) for q in pkg.values())
     if units <= 0:
         return None

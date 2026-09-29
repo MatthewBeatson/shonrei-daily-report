@@ -45,6 +45,16 @@ def test_settings_override_prefix_and_keyword():
     assert classify(facts({'K-1': 3}, ['Hot foil stamp']), rules)['printed'] is True
 
 
+def test_ks312_is_made_in_house_not_packaging():
+    # KS312 variants (e.g. the live KS312PBKBKA-S) take the standard plan lead time.
+    assert classify(facts({'KS312PBKBKA-S': 50}), RULES) is None
+    # Mixed with real packaging: only the other K lines count.
+    c = classify(facts({'KS312PBKBKA-S': 50, 'K-BOX-S': 10}), RULES)
+    assert c['units_remaining'] == 10 and c['line_count'] == 1
+    # Exclusions are a setting; clearing it turns the exception off.
+    assert classify(facts({'KS312PBKBKA-S': 50}), rules_from_settings({'board_packaging_sku_exclusions': ''})) is not None
+
+
 def test_deadlines_are_nz_working_days():
     # Wed 30 Sep 2026: plain -> Thu 1 Oct, printed -> Wed 7 Oct.
     assert deadline_for(date(2026, 9, 30), False, RULES) == date(2026, 10, 1)
