@@ -15,6 +15,10 @@ Reuses:
     date this month" (rather than re-querying Xero -- the hourly daily
     refresh already keeps that fresh) and reporting.manual_inputs'
     monthly_breakeven, per Matthew's call this session.
+
+Also writes board.plan_orders -- one row per SO, deliberately with NO
+dollar columns -- which is all the dispatch-area TV board (/board/) ever
+reads about the plan. See migrations/017_dispatch_board.sql.
 """
 from __future__ import annotations
 import io
@@ -22,12 +26,14 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import psycopg2.extras
 import requests
 
 from daily_refresh_supabase import get_conn, load_settings, log_step
 from dispatch_plan_data import fetch_open_orders
 from dispatch_plan_schedule import group_orders, schedule_groups, month_key
 from dispatch_plan_xlsx import build_workbook
+from board_packaging import classify, rules_from_settings
 
 STORAGE_BUCKET = 'dispatch-plans'
 
@@ -67,6 +73,43 @@ def _monthly_breakeven(conn) -> float | None:
         cur.execute("select monthly_breakeven from reporting.manual_inputs where id = 'current'")
         row = cur.fetchone()
         return float(row[0]) if row and row[0] is not None else None
+
+
+def _write_board_snapshot(conn, cfg, orders, schedule, holding):
+    """Full replace of board.plan_orders from this run's schedule. Same
+    transaction as the delete, so the TV never sees a half-empty plan.
+    No value_excl_gst anywhere in here -- the board has no $ by design."""
+    by_so = {o['order_number']: o for o in orders}
+    rules = rules_from_settings(cfg)
+    rows = []
+    groups = [g for month in schedule.values() for wk in month.values() for g in wk] + list(holding)
+    for g in groups:
+        for so in g.order_numbers:
+            o = by_so.get(so)
+            if not o:
+                continue
+            rows.append((
+                so, o['customer'], o['reference'], g.label if len(g.order_numbers) > 1 else None,
+                o['order_date'], None if g.hold else g.scheduling_date,
+                g.assigned_month, g.assigned_week, g.hold,
+                o.get('units_remaining'), o.get('line_count'),
+                # Packaging SOs get their own hourly-updated lists on the
+                # board (board_packaging.py) -- flagged here so the weekly
+                # plan list doesn't show them a second time.
+                classify(o.get('board_facts'), rules) is not None,
+            ))
+    with conn.cursor() as cur:
+        cur.execute('delete from board.plan_orders')
+        if rows:
+            psycopg2.extras.execute_values(
+                cur,
+                """insert into board.plan_orders
+                     (order_number, customer, reference, group_label, order_date, dispatch_date,
+                      assigned_month, assigned_week, hold, units_remaining, line_count, is_packaging)
+                   values %s""",
+                rows,
+            )
+    conn.commit()
 
 
 def _upload_to_storage(path: str, content: bytes):
@@ -125,6 +168,8 @@ def run_dispatch_plan(triggered_by=None):
 
             storage_path = f'dispatch-plan-{today.isoformat()}.xlsx'
             _upload_to_storage(storage_path, content)
+
+            _write_board_snapshot(conn, cfg, orders, schedule, holding)
 
             months_covered = sorted(schedule.keys())
             with conn.cursor() as cur:

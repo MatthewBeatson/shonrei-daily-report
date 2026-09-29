@@ -91,6 +91,47 @@ than assuming), see `scripts/dump_sample_sale.py` -- read-only, reads
 credentials the same way `scripts/print_local_credentials.py` does, and
 never sends anything through chat.
 
+## Dispatch Board (TV) + staff KPIs
+
+For the dispatch-area TV. **No dollar figures and nothing from the daily
+report** reach either screen -- they read only the separate `board`
+schema (migration `017_dispatch_board.sql`), gated by one shared access
+code (`DISPATCH_BOARD_SECRET`) instead of a report_users login.
+
+- **`/board/`** -- the TV. A KPI strip across the top -- SOs picked
+  this week (vs due, per-day bars), picked today, late SOs, still to go
+  this week / this month (SOs + units), units produced this week
+  (production.batch_actuals), SOs on hold -- and three order lists below,
+  one row per SO with units to go (ordered qty minus invoiced qty), a
+  green tick once picked and red LATE rows once past due and unpicked.
+  Each list pages through automatically if it doesn't fit:
+  - **Dispatch this week** -- the Monthly Dispatch Plan's week (Monday
+    snapshot), excluding packaging SOs.
+  - **Packaging -- next day** -- SOs with any line SKU starting `K` and
+    no printing charge, due 1 NZ working day after the order date.
+  - **Packaging -- printed** -- the same, but with an additional charge
+    whose description contains "print" (e.g. "Printed Lining ($0.48 per
+    box)"), due 5 NZ working days after the order date.
+  The packaging lists are rewritten by every hourly refresh
+  (`refresh-service/board_packaging.py`). The prefix, keyword and both
+  lead times are `board_packaging_*` / `board_printing_charge_keywords`
+  in `reporting.settings`. Polls every minute; reloads itself every 6 hours.
+- **`/kpi/`** -- phone/tablet page where staff choose their name and an
+  SO and tap **Picking done** (the green sheet). Undo is in the recent list.
+
+The plan rows come from the Monthly Dispatch Plan run
+(`dispatch_plan_run.py` rewrites `board.plan_orders` every Monday, or on
+"Generate now"). Packaging rows come from the hourly refresh. Picking
+ticks are live.
+
+**Setup:** run migration 017, set `DISPATCH_BOARD_SECRET` on
+shonrei-report-web in Render, then trigger one dispatch plan generation.
+The first hourly refresh and the first plan run after deploying are
+slower than usual: each re-downloads every open order's detail once to
+fill in the per-SKU quantities and charge descriptions the board needs. On the TV, open
+`https://<app>/board/?code=<the code>` once. The code is saved on that
+device and removed from the address bar.
+
 ## Local dev
 
 ```bash
@@ -101,6 +142,8 @@ python scripts/run_migration.py migrations/003_fix_manual_inputs_trigger.sql
 python scripts/run_migration.py migrations/004_previous_workday_sales.sql
 python scripts/run_migration.py migrations/005_workday_sales_status.sql
 python scripts/run_migration.py migrations/006_dispatch_plan.sql
+# ... 007-016 ...
+python scripts/run_migration.py migrations/017_dispatch_board.sql
 
 # Backend (serves the frontend too) -- reads the project ROOT .env
 # (backend/src/index.js points dotenv at ../../.env explicitly; a bare

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dispatch Board</title>
+<meta name="robots" content="noindex, nofollow" />
+<meta name="theme-color" content="#0d1b2e" />
+<link rel="stylesheet" href="/board/board.css" />
+</head>
+<body>
+
+<!-- Access code, shown once per device -->
+<div class="gate hidden" id="gate">
+  <form class="gate-card" id="gate-form">
+    <h1>Dispatch Board</h1>
+    <p>Enter the board access code for this screen.</p>
+    <input id="gate-code" type="password" autocomplete="off" autofocus />
+    <button type="submit">Start</button>
+    <div class="gate-error" id="gate-error"></div>
+  </form>
+</div>
+
+<div class="board hidden" id="board">
+  <header class="topbar">
+    <div class="brand">SHONREI <span>DISPATCH</span></div>
+    <div class="week" id="week-label"></div>
+    <div class="clock"><span id="clock-time"></span><small id="clock-date"></small></div>
+  </header>
+
+  <!-- KPI strip -->
+  <section class="kpis">
+    <div class="tile hero">
+      <div class="t-label">SOs picked this week</div>
+      <div class="hero-body">
+        <div class="t-value" id="k-picked-week">–</div>
+        <div class="hero-side">
+          <div class="t-sub" id="k-picked-week-sub"></div>
+          <div class="bar"><div class="bar-fill" id="k-picked-bar"></div></div>
+          <div class="days" id="k-days"></div>
+        </div>
+      </div>
+    </div>
+    <div class="tile">
+      <div class="t-label">Picked today</div>
+      <div class="t-value" id="k-picked-today">–</div>
+    </div>
+    <div class="tile" id="t-late">
+      <div class="t-label">Late SOs</div>
+      <div class="t-value" id="k-late">–</div>
+      <div class="t-sub" id="k-late-sub"></div>
+    </div>
+    <div class="tile">
+      <div class="t-label">To go this week</div>
+      <div class="t-value" id="k-togo-week">–</div>
+      <div class="t-sub" id="k-togo-week-sub"></div>
+    </div>
+    <div class="tile">
+      <div class="t-label">To go this month</div>
+      <div class="t-value" id="k-togo-month">–</div>
+      <div class="t-sub" id="k-togo-month-sub"></div>
+    </div>
+    <div class="tile stack">
+      <div><div class="t-label">Produced this week</div><div class="t-mid" id="k-produced">–</div></div>
+      <div><div class="t-label">SOs on hold</div><div class="t-mid" id="k-held">–</div></div>
+    </div>
+  </section>
+
+  <main class="lists">
+    <section class="list-pane" id="pane-plan">
+      <div class="list-head">
+        <h2>Dispatch this week</h2>
+        <div class="list-sub" data-sub></div>
+      </div>
+      <div class="list-body" data-body></div>
+      <footer class="list-foot"><span id="next-week"></span><span class="pager" data-pager></span></footer>
+    </section>
+
+    <section class="list-pane narrow plain" id="pane-plain">
+      <div class="list-head">
+        <h2>Packaging · next day</h2>
+        <div class="list-sub" data-sub></div>
+      </div>
+      <div class="list-note">Plain boxes &amp; bags · due 1 working day after order</div>
+      <div class="list-body" data-body></div>
+      <footer class="list-foot"><span></span><span class="pager" data-pager></span></footer>
+    </section>
+
+    <section class="list-pane narrow printed" id="pane-printed">
+      <div class="list-head">
+        <h2>Packaging · printed</h2>
+        <div class="list-sub" data-sub></div>
+      </div>
+      <div class="list-note">Printed boxes &amp; bags · due 5 working days after order</div>
+      <div class="list-body" data-body></div>
+      <footer class="list-foot"><span></span><span class="pager" data-pager></span></footer>
+    </section>
+  </main>
+
+  <div class="status" id="status"></div>
+</div>
+
+<script src="/board/board.js"></script>
+</body>
+</html>

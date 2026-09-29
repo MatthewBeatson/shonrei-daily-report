@@ -41,6 +41,10 @@ services:
       # floor app sends this, not a Supabase login. See production/README.md.
       - key: FLOOR_APP_SHARED_SECRET
         sync: false
+      # Gates /board/api (the dispatch-area TV at /board/ and the staff
+      # SO-picking KPI page at /kpi/). No report_users login, no $ data.
+      - key: DISPATCH_BOARD_SECRET
+        sync: false
       # Gives the production/warehouse system its own URL on this same
       # service (no new Render service, no new deploy) -- see
       # production/README.md "A dedicated URL". Both optional: unset,

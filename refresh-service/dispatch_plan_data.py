@@ -21,6 +21,9 @@ scripts/dump_sample_sale.py), not assumed:
                         -> remaining un-invoiced balance excl GST (same math
                            as daily_refresh_supabase.cin7_sales())
   - CombinedInvoiceStatus -> real invoice/shipped status field
+  - Order.Lines[].Quantity, Invoices[].Lines[].Quantity
+                        -> units ordered / invoiced, for the Dispatch Board's
+                           "units to go out" (no $ on that screen)
 
 Unlike the daily figure, this pull does NOT apply a 1-year "createdSince"
 cutoff -- a dispatch plan needs to account for every order currently on
@@ -32,7 +35,7 @@ from datetime import datetime, date
 from collections import Counter
 
 from daily_refresh_supabase import (
-    cin7_get, cin7_list_signature, load_cin7_cache_row, save_cin7_cache_row, norm, num, split,
+    cin7_get, cin7_list_signature, load_cin7_cache_row, save_cin7_cache_row, norm, num, split, sale_board_facts, board_facts_from_cache,
 )
 
 
@@ -99,7 +102,10 @@ def fetch_open_orders(conn, cfg, headers) -> list[dict]:
         signature = s['_Signature']
         cached = load_cin7_cache_row(conn, sale_id)
         detail = None
-        if cached and cached.get('signature') == signature and cached.get('base_value') is not None:
+        # facts is None on rows cached before the Dispatch Board
+        # existed -- refetch those once rather than show the board a blank.
+        facts = board_facts_from_cache(cached)
+        if cached and cached.get('signature') == signature and cached.get('base_value') is not None and facts:
             order_before_tax = num(cached.get('order_before_tax'))
             invoiced_before_tax = num(cached.get('invoiced_before_tax'))
             credited_before_tax = num(cached.get('credited_before_tax'))
@@ -133,12 +139,14 @@ def fetch_open_orders(conn, cfg, headers) -> list[dict]:
             rate = num(detail.get('CurrencyRate')) or 1.0
             customer_value = max(0.0, order_before_tax - invoiced_before_tax + credited_before_tax)
             base_value = customer_value * rate
+            facts = sale_board_facts(detail, invoice_nodes)
             record = {
                 'signature': signature, 'base_value': base_value, 'customer_value': customer_value, 'rate': rate,
                 'order_before_tax': order_before_tax, 'invoiced_before_tax': invoiced_before_tax,
                 'credited_before_tax': credited_before_tax, 'order_number': s.get('OrderNumber'),
                 'status': s.get('Status'), 'order_status': s.get('OrderStatus'),
                 'invoice_status': s.get('_EffectiveInvoiceStatus'),
+                **facts,
             }
             save_cin7_cache_row(conn, sale_id, record)
             fetched += 1
@@ -171,6 +179,10 @@ def fetch_open_orders(conn, cfg, headers) -> list[dict]:
             'ship_by': ship_by,
             'value_excl_gst': remaining_value_excl_gst,
             'invoice_status': s.get('_EffectiveInvoiceStatus'),
+            # Dispatch Board only -- never a dollar figure.
+            'units_remaining': max(0.0, facts['units_ordered'] - facts['units_invoiced']),
+            'line_count': facts['line_count'],
+            'board_facts': facts,
         })
 
     print(f'Dispatch plan: cache complete - {reused} reused, {fetched} downloaded, {len(orders)} orders on hand.', flush=True)
