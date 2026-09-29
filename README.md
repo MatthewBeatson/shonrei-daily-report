@@ -109,6 +109,8 @@ code (`DISPATCH_BOARD_SECRET`) instead of a report_users login.
     snapshot), excluding packaging SOs.
   - **Packaging -- next day** -- SOs with any line SKU starting `K` and
     no printing charge, due 1 NZ working day after the order date.
+    Except SKUs starting `KS312` (made in-house -- standard plan lead
+    time; `board_packaging_sku_exclusions`).
   - **Packaging -- printed** -- the same, but with an additional charge
     whose description contains "print" (e.g. "Printed Lining ($0.48 per
     box)"), due 5 NZ working days after the order date.
