@@ -33,8 +33,11 @@
       <section class="scan-card" id="scanStep">
         <div class="scan-input-row">
           <label for="batchCodeInput">Scan or enter batch code</label>
-          <input type="text" id="batchCodeInput" inputmode="text" autocomplete="off"
-                 autocapitalize="characters" placeholder="B-XXXXXX-XXXXXX" autofocus>
+          <div class="scan-input-with-camera">
+            <input type="text" id="batchCodeInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="B-XXXXXX-XXXXXX" autofocus>
+            <button type="button" class="camera-scan-btn" data-target="batchCodeInput" aria-label="Scan with camera">📷</button>
+          </div>
         </div>
         <div id="scanError" class="scan-error" hidden></div>
 
@@ -110,8 +113,11 @@
       <section class="scan-card" id="stAreaStep">
         <div class="scan-input-row">
           <label for="stAreaInput">Scan the area's location barcode</label>
-          <input type="text" id="stAreaInput" inputmode="text" autocomplete="off"
-                 autocapitalize="characters" placeholder="e.g. STOCKROOM-MAIN">
+          <div class="scan-input-with-camera">
+            <input type="text" id="stAreaInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="e.g. STOCKROOM-MAIN">
+            <button type="button" class="camera-scan-btn" data-target="stAreaInput" aria-label="Scan with camera">📷</button>
+          </div>
         </div>
         <div id="stAreaError" class="scan-error" hidden></div>
       </section>
@@ -126,8 +132,11 @@
       <section class="scan-card" id="stScanStep" hidden>
         <div class="scan-input-row">
           <label for="stSkuInput">Scan or enter SKU</label>
-          <input type="text" id="stSkuInput" inputmode="text" autocomplete="off"
-                 autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+          <div class="scan-input-with-camera">
+            <input type="text" id="stSkuInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+            <button type="button" class="camera-scan-btn" data-target="stSkuInput" aria-label="Scan with camera">📷</button>
+          </div>
         </div>
         <div id="stScanError" class="scan-error" hidden></div>
         <div>
@@ -175,8 +184,11 @@
       <section class="scan-card" id="paSkuStep">
         <div class="scan-input-row">
           <label for="paSkuInput">1. Scan or enter product SKU</label>
-          <input type="text" id="paSkuInput" inputmode="text" autocomplete="off"
-                 autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+          <div class="scan-input-with-camera">
+            <input type="text" id="paSkuInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+            <button type="button" class="camera-scan-btn" data-target="paSkuInput" aria-label="Scan with camera">📷</button>
+          </div>
         </div>
         <div>
           <button id="paSkuNextBtn">Next</button>
@@ -188,8 +200,11 @@
         <p id="paHomeLocationLine" style="margin:0 0 14px; color:var(--gray); font-size:0.9rem;"></p>
         <div class="scan-input-row">
           <label for="paLocationInput">2. Scan or enter the bin's location code</label>
-          <input type="text" id="paLocationInput" inputmode="text" autocomplete="off"
-                 autocapitalize="characters" placeholder="e.g. A-03-02">
+          <div class="scan-input-with-camera">
+            <input type="text" id="paLocationInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="e.g. A-03-02">
+            <button type="button" class="camera-scan-btn" data-target="paLocationInput" aria-label="Scan with camera">📷</button>
+          </div>
         </div>
         <p id="paBlockErrorLine" class="scan-error" hidden></p>
         <div>
@@ -204,7 +219,24 @@
     </div>
   </div>
 
+  <!-- Camera-scan modal: a fallback for whichever scan input opened it,
+       for anyone without the Bluetooth scanner in hand -- see
+       camera-scan.js. One shared modal reused by every camera-scan-btn,
+       not five separate ones. -->
+  <div id="cameraScanModal" class="camera-scan-modal" hidden>
+    <div class="camera-scan-modal-inner">
+      <div class="camera-scan-modal-header">
+        <span>Scan with camera</span>
+        <button type="button" id="cameraScanCloseBtn" aria-label="Close">&times;</button>
+      </div>
+      <video id="cameraScanVideo" playsinline></video>
+      <p id="cameraScanStatus" class="camera-scan-status">Starting camera...</p>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
   <script src="/production/floor-config.js"></script>
+  <script src="camera-scan.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

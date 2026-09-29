@@ -187,6 +187,17 @@ permission, no barcode-decoding library, no extra setup on the tablet.
 Every batch also shows up in a plain tappable list ordered by priority,
 for when there's no printed code handy.
 
+Every scan-input-row across Batches/Stocktake/Putaway also has a 📷
+button next to it -- a camera-based FALLBACK for anyone without the
+physical scanner in hand, not a replacement for it. Opens a shared modal
+(`camera-scan.js`), decodes via the phone's camera using ZXing
+(`@zxing/library`, loaded from a CDN -- Code128 is what every label this
+app prints uses, plus common 1D/QR formats for anything else), fills the
+same input, then fires a synthetic Enter keydown so it flows through the
+exact same lookup path a physical scan or manual typing already does.
+Needs HTTPS and camera permission (denied gracefully -- falls back to
+typing/the physical scanner).
+
 **What's dry-run vs. real today:** the DB side (targets, demand lines,
 batches, actuals, the clamp-at-zero/close-at-zero math) is fully real --
 see the local end-to-end run below. Every Cin7 call

@@ -173,6 +173,65 @@ header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
   text-align: center;
 }
 .scan-input-row input:focus { border-color: var(--blue); outline: none; }
+.scan-input-with-camera { display: flex; align-items: stretch; gap: 8px; }
+.scan-input-with-camera input { flex: 1; }
+.camera-scan-btn {
+  flex: 0 0 auto;
+  width: 56px;
+  font-size: 1.4rem;
+  border-radius: 12px;
+  border: 2px solid var(--border);
+  background: var(--card-bg);
+}
+
+.camera-scan-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+.camera-scan-modal-inner {
+  background: var(--bg);
+  border-radius: 16px;
+  overflow: hidden;
+  max-width: 420px;
+  width: 100%;
+}
+.camera-scan-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  color: var(--text);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.camera-scan-modal-header button {
+  border: none;
+  background: none;
+  font-size: 1.6rem;
+  line-height: 1;
+  color: var(--gray);
+  padding: 0 4px;
+}
+#cameraScanVideo {
+  width: 100%;
+  display: block;
+  background: #000;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+.camera-scan-status {
+  text-align: center;
+  color: var(--gray);
+  font-size: 0.85rem;
+  padding: 10px 16px 16px;
+  margin: 0;
+}
 .scan-error {
   color: var(--red);
   font-size: 0.9rem;
