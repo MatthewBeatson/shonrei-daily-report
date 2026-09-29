@@ -66,7 +66,7 @@
       // comment: that distinction is exactly what was killing the
       // scan loop before).
     }
-    status.textContent = `Point the camera at a barcode or QR code, filling most of the frame (tap the picture if it looks blurry)... (${attempts} frames checked)`;
+    status.textContent = `Point the camera at a barcode or QR code, filling most of the frame (tap the picture if it looks blurry)... (${attempts} frames checked, ${video.videoWidth}x${video.videoHeight})`;
     setTimeout(() => tick(targetInput), 120);
   }
 
@@ -138,6 +138,21 @@
           }
         } catch (err) { /* best-effort, ignore */ }
       };
+
+      // ZXing sizes its internal decode canvas ONCE, from the video's
+      // width/height at that exact moment, then caches it for every
+      // future frame -- confirmed live, 2026-09-29: video.play()
+      // resolving does NOT guarantee videoWidth/videoHeight are
+      // populated yet on every browser, and starting the decode loop
+      // one tick too early locks that canvas in at 0x0 forever, so
+      // EVERY frame after that decodes against a blank image no matter
+      // what's actually in front of the camera -- explains total
+      // failure regardless of format (QR included). Wait for real
+      // dimensions before the first decode attempt.
+      while (video.videoWidth === 0 && !stopped) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+      if (stopped) return;
 
       tick(targetInput);
     } catch (err) {
