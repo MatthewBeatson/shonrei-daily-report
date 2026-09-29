@@ -9,17 +9,26 @@
 // 'Enter' flow a physical scanner or manual typing already triggers --
 // no separate submit path to keep in sync.
 //
-// Runs its own decode loop rather than ZXing's built-in
-// decodeFromConstraints/decodeContinuously -- found live, 2026-09-29,
-// that library loop only reschedules its next attempt after one of
-// THREE specific "nothing found this frame" exception types
-// (NotFoundException/ChecksumException/FormatException); any OTHER
-// error thrown mid-decode (plausible with TRY_HARDER hitting an edge
-// case on a real blurry/tilted frame) silently kills the loop for
-// good -- no crash, no visible error, camera picture keeps showing,
-// just never decodes another frame. That matches "still doesn't pick
-// it up" exactly. This loop instead ALWAYS reschedules regardless of
-// what a frame's decode attempt throws.
+// Two library bugs found and worked around here, both confirmed live/
+// offline 2026-09-29:
+//   1. ZXing's built-in decodeContinuously loop only reschedules its
+//      next attempt after one of three specific "nothing found this
+//      frame" exception types -- any OTHER error thrown mid-decode
+//      silently kills the loop for good, no crash, no visible error.
+//      Worked around by running our own setTimeout loop that ALWAYS
+//      reschedules regardless of what a frame's attempt throws.
+//   2. reader.decode(source) only correctly sizes its internal decode
+//      canvas for an HTMLVideoElement or HTMLImageElement source --
+//      createCaptureCanvas/drawImageOnCanvas read videoWidth/videoHeight
+//      or naturalWidth/naturalHeight, which a plain <canvas> has
+//      neither of, so passing a canvas straight to decode() silently
+//      fails on EVERY frame no matter what's actually drawn on it
+//      (confirmed offline against node-canvas: a canvas source fails
+//      even for a clean, undistorted barcode). Anywhere this file needs
+//      to decode from a canvas (the debug snapshot, the rotation
+//      fallback below) goes through canvasToImage() first, converting
+//      to a real <img> -- confirmed offline that path decodes
+//      correctly, even through heavy blur/contrast washout.
 
 (function () {
   const modal = document.getElementById('cameraScanModal');
@@ -50,24 +59,7 @@
 
   closeBtn.addEventListener('click', stopScan);
 
-  // Debug aid: freezes and shows EXACTLY the pixels the decoder is
-  // working from (drawn from the video element the same way ZXing's own
-  // createBinaryBitmap does internally), and separately re-attempts a
-  // decode against that frozen frame with a brand new reader instance --
-  // isolates "is the captured image itself too blurry/dark to read" from
-  // "is something wrong with the running loop/reader state", since the
-  // running loop's own frame count/resolution already confirmed live,
-  // 2026-09-29 that frames ARE flowing correctly and just never matching.
-  debugBtn.addEventListener('click', () => {
-    if (stopped || !video.videoWidth) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    frozenFrame.src = canvas.toDataURL('image/png');
-    video.hidden = true;
-    frozenFrame.hidden = false;
-
+  function makeReader() {
     const hints = new Map();
     hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
       window.ZXing.BarcodeFormat.CODE_128,
@@ -77,9 +69,39 @@
       window.ZXing.BarcodeFormat.UPC_A,
     ]);
     hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
-    const debugReader = new window.ZXing.BrowserMultiFormatReader(hints);
+    return new window.ZXing.BrowserMultiFormatReader(hints);
+  }
+
+  // See header comment (bug 2) -- decode() only works reliably against
+  // a real <img>, not a plain <canvas>.
+  function canvasToImage(canvas) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = canvas.toDataURL('image/png');
+    });
+  }
+
+  // Debug aid: freezes and shows EXACTLY the pixels the decoder works
+  // from (drawn from the video element the same way ZXing's own
+  // createBinaryBitmap does internally), and separately re-attempts a
+  // decode against that frozen frame -- isolates "is the captured image
+  // itself too blurry/dark to read" from "is something wrong with the
+  // running loop/reader state".
+  debugBtn.addEventListener('click', async () => {
+    if (stopped || !video.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    frozenFrame.src = canvas.toDataURL('image/png');
+    video.hidden = true;
+    frozenFrame.hidden = false;
+
     try {
-      const result = debugReader.decode(canvas);
+      const img = await canvasToImage(canvas);
+      const result = makeReader().decode(img);
       status.textContent = `Decoded from the frozen frame: "${result.getText()}" -- the live loop should have caught this too. Tap the picture to go back to the camera.`;
     } catch (err) {
       status.textContent = `This exact frozen frame could NOT be decoded (${err?.name || err}). ` +
@@ -91,28 +113,64 @@
     };
   });
 
-  function tick(targetInput) {
+  // Some Android phones' camera/WebView combo hands drawImage() a frame
+  // that's rotated relative to what's actually shown on screen (a known
+  // class of bug, more common on certain OEM skins). Draws the current
+  // video frame rotated by `degrees` and decodes that instead.
+  async function decodeRotated(source, degrees) {
+    const canvas = document.createElement('canvas');
+    const swapped = degrees === 90 || degrees === 270;
+    canvas.width = swapped ? source.videoHeight : source.videoWidth;
+    canvas.height = swapped ? source.videoWidth : source.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((degrees * Math.PI) / 180);
+    ctx.drawImage(source, -source.videoWidth / 2, -source.videoHeight / 2);
+    const img = await canvasToImage(canvas);
+    return makeReader().decode(img);
+  }
+
+  async function tick(targetInput) {
     if (stopped) return;
     attempts += 1;
+
     try {
       const result = reader.decode(video);
-      const text = result.getText();
-      stopScan();
-      targetInput.value = text;
-      targetInput.focus();
-      // Same as a physical scanner's Enter keystroke -- dispatch a real
-      // Enter keydown so every existing listener (one per scan input,
-      // see app.js) fires exactly as it already does today.
-      targetInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      finish(targetInput, result.getText());
       return;
     } catch (err) {
-      // Expected on almost every frame until a barcode lines up --
-      // NOT treated as fatal regardless of what it is (see header
-      // comment: that distinction is exactly what was killing the
-      // scan loop before).
+      // Expected on almost every frame until a barcode lines up -- NOT
+      // treated as fatal regardless of what it is (see header comment:
+      // that distinction is exactly what was killing the scan loop
+      // before this rewrite).
     }
+
+    // One rotation candidate per attempt, cycling through 90/180/270 --
+    // covers a rotated-capture bug without tripling every frame's cost.
+    // (See header comment: this now correctly goes through
+    // canvasToImage rather than decoding the canvas directly.)
+    const degrees = [90, 180, 270][attempts % 3];
+    try {
+      const result = await decodeRotated(video, degrees);
+      finish(targetInput, result.getText());
+      return;
+    } catch (err) {
+      // Same as above -- just means this rotation didn't match either.
+    }
+
+    if (stopped) return;
     status.textContent = `Point the camera at a barcode or QR code, filling most of the frame (tap the picture if it looks blurry)... (${attempts} frames checked, ${video.videoWidth}x${video.videoHeight})`;
     setTimeout(() => tick(targetInput), 120);
+  }
+
+  function finish(targetInput, text) {
+    stopScan();
+    targetInput.value = text;
+    targetInput.focus();
+    // Same as a physical scanner's Enter keystroke -- dispatch a real
+    // Enter keydown so every existing listener (one per scan input, see
+    // app.js) fires exactly as it already does today.
+    targetInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
   }
 
   async function startScan(targetInput) {
@@ -125,23 +183,7 @@
     attempts = 0;
     modal.hidden = false;
     status.textContent = 'Starting camera...';
-
-    // Code128 (every label this app prints, see production/planner/
-    // labels.py) and QR (easy to test with -- much more tolerant of
-    // blur/tilt than a 1D barcode, has its own finder pattern) as the
-    // two formats actually worth testing right now, plus common 1D
-    // fallbacks. TRY_HARDER: more scan rows/rotation attempts, worth it
-    // at 720p (not affordable at the 1080p an earlier attempt tried).
-    const hints = new Map();
-    hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-      window.ZXing.BarcodeFormat.CODE_128,
-      window.ZXing.BarcodeFormat.QR_CODE,
-      window.ZXing.BarcodeFormat.EAN_13,
-      window.ZXing.BarcodeFormat.EAN_8,
-      window.ZXing.BarcodeFormat.UPC_A,
-    ]);
-    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
-    reader = new window.ZXing.BrowserMultiFormatReader(hints);
+    reader = makeReader();
 
     try {
       const devices = await reader.listVideoInputDevices();
@@ -186,14 +228,10 @@
 
       // ZXing sizes its internal decode canvas ONCE, from the video's
       // width/height at that exact moment, then caches it for every
-      // future frame -- confirmed live, 2026-09-29: video.play()
-      // resolving does NOT guarantee videoWidth/videoHeight are
-      // populated yet on every browser, and starting the decode loop
-      // one tick too early locks that canvas in at 0x0 forever, so
-      // EVERY frame after that decodes against a blank image no matter
-      // what's actually in front of the camera -- explains total
-      // failure regardless of format (QR included). Wait for real
-      // dimensions before the first decode attempt.
+      // future frame -- video.play() resolving does NOT guarantee
+      // videoWidth/videoHeight are populated yet on every browser, and
+      // starting the decode loop one tick too early locks that canvas
+      // in at 0x0 forever. Wait for real dimensions first.
       while (video.videoWidth === 0 && !stopped) {
         await new Promise((resolve) => requestAnimationFrame(resolve));
       }
