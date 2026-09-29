@@ -232,6 +232,22 @@ header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
   padding: 10px 16px 16px;
   margin: 0;
 }
+#cameraScanFrozenFrame {
+  width: 100%;
+  display: block;
+  background: #000;
+}
+.camera-scan-debug-btn {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 0 16px 16px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--gray);
+  font-size: 0.8rem;
+}
 .scan-error {
   color: var(--red);
   font-size: 0.9rem;

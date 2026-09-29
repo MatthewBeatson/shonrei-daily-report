@@ -231,7 +231,11 @@
         <button type="button" id="cameraScanCloseBtn" aria-label="Close">&times;</button>
       </div>
       <video id="cameraScanVideo" playsinline autoplay muted></video>
+      <img id="cameraScanFrozenFrame" hidden alt="Captured frame" />
       <p id="cameraScanStatus" class="camera-scan-status">Starting camera...</p>
+      <button type="button" id="cameraScanDebugBtn" class="camera-scan-debug-btn">
+        Debug: show exactly what the decoder sees
+      </button>
     </div>
   </div>
 

@@ -26,6 +26,8 @@
   const video = document.getElementById('cameraScanVideo');
   const status = document.getElementById('cameraScanStatus');
   const closeBtn = document.getElementById('cameraScanCloseBtn');
+  const frozenFrame = document.getElementById('cameraScanFrozenFrame');
+  const debugBtn = document.getElementById('cameraScanDebugBtn');
 
   let reader = null;
   let stream = null;
@@ -42,9 +44,52 @@
     video.onclick = null;
     reader = null;
     modal.hidden = true;
+    video.hidden = false;
+    frozenFrame.hidden = true;
   }
 
   closeBtn.addEventListener('click', stopScan);
+
+  // Debug aid: freezes and shows EXACTLY the pixels the decoder is
+  // working from (drawn from the video element the same way ZXing's own
+  // createBinaryBitmap does internally), and separately re-attempts a
+  // decode against that frozen frame with a brand new reader instance --
+  // isolates "is the captured image itself too blurry/dark to read" from
+  // "is something wrong with the running loop/reader state", since the
+  // running loop's own frame count/resolution already confirmed live,
+  // 2026-09-29 that frames ARE flowing correctly and just never matching.
+  debugBtn.addEventListener('click', () => {
+    if (stopped || !video.videoWidth) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    frozenFrame.src = canvas.toDataURL('image/png');
+    video.hidden = true;
+    frozenFrame.hidden = false;
+
+    const hints = new Map();
+    hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      window.ZXing.BarcodeFormat.CODE_128,
+      window.ZXing.BarcodeFormat.QR_CODE,
+      window.ZXing.BarcodeFormat.EAN_13,
+      window.ZXing.BarcodeFormat.EAN_8,
+      window.ZXing.BarcodeFormat.UPC_A,
+    ]);
+    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+    const debugReader = new window.ZXing.BrowserMultiFormatReader(hints);
+    try {
+      const result = debugReader.decode(canvas);
+      status.textContent = `Decoded from the frozen frame: "${result.getText()}" -- the live loop should have caught this too. Tap the picture to go back to the camera.`;
+    } catch (err) {
+      status.textContent = `This exact frozen frame could NOT be decoded (${err?.name || err}). ` +
+        'Screenshot this picture and send it over -- that\'s precisely what the decoder is failing on. Tap the picture to go back to the camera.';
+    }
+    frozenFrame.onclick = () => {
+      frozenFrame.hidden = true;
+      video.hidden = false;
+    };
+  });
 
   function tick(targetInput) {
     if (stopped) return;
