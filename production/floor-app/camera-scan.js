@@ -56,7 +56,13 @@
       window.ZXing.BarcodeFormat.UPC_A,
       window.ZXing.BarcodeFormat.QR_CODE,
     ]);
-    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+    // NOT TRY_HARDER -- this is a pure-JS decoder (no hardware
+    // acceleration), and TRY_HARDER's more exhaustive per-frame scan
+    // was found live (2026-09-29) to slow decoding enough that it
+    // never caught a real barcode at all, even sitting clearly in
+    // frame ("camera shows barcode but doesn't scan it") -- correctness
+    // isn't the bottleneck here, throughput (getting through enough
+    // frames per second) is.
     reader = new window.ZXing.BrowserMultiFormatReader(hints);
     try {
       // Instance method, not static -- BrowserCodeReader.listVideoInputDevices
@@ -68,20 +74,23 @@
       const backCamera = devices.find((d) => /back|rear|environment/i.test(d.label));
       const deviceId = (backCamera || devices[0])?.deviceId;
 
-      // A closer, higher-resolution feed with continuous autofocus reads
-      // a small barcode far more reliably than the browser's low-res
-      // default -- phone cameras otherwise often stay focused for
-      // general video, not a barcode held close. focusMode is an
-      // Android Chrome extension to the constraints spec (not
-      // universally supported) -- only added when the browser itself
-      // reports it, an unsupported advanced constraint is otherwise
-      // silently ignored per spec anyway, this is just belt-and-braces.
+      // 720p, NOT a higher resolution -- confirmed live, 2026-09-29:
+      // requesting 1920x1080 made scanning WORSE, not better (this
+      // decoder is pure JS with no hardware acceleration, so a bigger
+      // frame to binarize/scan per attempt means fewer attempts per
+      // second, and on a phone that was slow enough to never catch a
+      // real barcode at all even sitting still in frame). 720p is
+      // plenty of resolution for a barcode filling most of the frame,
+      // and lets the decode loop actually keep up. Continuous autofocus
+      // (where supported) still helps get a sharp image at that size --
+      // focusMode is an Android Chrome extension to the constraints
+      // spec, only added when the browser itself reports it.
       const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
       const videoConstraints = {
         deviceId: deviceId ? { exact: deviceId } : undefined,
         facingMode: deviceId ? undefined : { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
       };
       if (supported.focusMode) {
         videoConstraints.advanced = [{ focusMode: 'continuous' }];
