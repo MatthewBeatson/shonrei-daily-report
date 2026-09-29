@@ -24,6 +24,7 @@
       try { reader.reset(); } catch (err) { /* already stopped */ }
       reader = null;
     }
+    video.onclick = null;
     modal.hidden = true;
     activeTargetInput = null;
   }
@@ -56,13 +57,13 @@
       window.ZXing.BarcodeFormat.UPC_A,
       window.ZXing.BarcodeFormat.QR_CODE,
     ]);
-    // NOT TRY_HARDER -- this is a pure-JS decoder (no hardware
-    // acceleration), and TRY_HARDER's more exhaustive per-frame scan
-    // was found live (2026-09-29) to slow decoding enough that it
-    // never caught a real barcode at all, even sitting clearly in
-    // frame ("camera shows barcode but doesn't scan it") -- correctness
-    // isn't the bottleneck here, throughput (getting through enough
-    // frames per second) is.
+    // TRY_HARDER back on (removing it made no difference live,
+    // 2026-09-29 -- confirmed screenshots showed a slightly blurry,
+    // slightly tilted barcode, which is exactly what TRY_HARDER's extra
+    // scan rows/rotation attempts help with; the earlier "never scans
+    // at all" symptom was the 1920x1080 resolution, not this). Only
+    // affordable now paired with 720p, not 1080p -- see below.
+    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
     reader = new window.ZXing.BrowserMultiFormatReader(hints);
     try {
       // Instance method, not static -- BrowserCodeReader.listVideoInputDevices
@@ -96,7 +97,26 @@
         videoConstraints.advanced = [{ focusMode: 'continuous' }];
       }
 
-      status.textContent = 'Point the camera at a barcode, filling most of the frame...';
+      // Tap-to-refocus: the visible blur in both test photos (2026-09-29)
+      // suggests the camera locked focus once at startup and never
+      // re-focused for a barcode held up close afterward -- continuous
+      // focusMode isn't honored by every phone's browser. Re-asserting
+      // it on tap gives a manual nudge on those phones; a no-op
+      // everywhere else (wrapped so an unsupported call never breaks
+      // the tap).
+      video.onclick = async () => {
+        try {
+          const stream = video.srcObject;
+          const videoTrack = stream?.getVideoTracks?.()[0];
+          if (videoTrack && supported.focusMode) {
+            status.textContent = 'Refocusing...';
+            await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+            status.textContent = 'Point the camera at a barcode, filling most of the frame...';
+          }
+        } catch (err) { /* best-effort, ignore */ }
+      };
+
+      status.textContent = 'Point the camera at a barcode, filling most of the frame (tap the picture if it looks blurry)...';
       await reader.decodeFromConstraints({ video: videoConstraints }, video, (result, err) => {
         if (result) {
           const text = result.getText();
