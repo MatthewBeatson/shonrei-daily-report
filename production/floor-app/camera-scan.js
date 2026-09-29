@@ -4,11 +4,22 @@
 // stays the primary, faster method everywhere. Every camera-scan-btn
 // opens the same shared modal, decodes via the phone's own camera using
 // ZXing (reads Code128, which is what every label this app prints uses --
-// see production/planner/labels.py -- plus common 1D/QR formats for
-// anything scanned that this app didn't print itself), fills in
-// whichever input requested it, and fires the same 'Enter' flow a
-// physical scanner or manual typing already triggers -- no separate
-// submit path to keep in sync.
+// see production/planner/labels.py -- plus QR and a few common 1D
+// formats), fills in whichever input requested it, and fires the same
+// 'Enter' flow a physical scanner or manual typing already triggers --
+// no separate submit path to keep in sync.
+//
+// Runs its own decode loop rather than ZXing's built-in
+// decodeFromConstraints/decodeContinuously -- found live, 2026-09-29,
+// that library loop only reschedules its next attempt after one of
+// THREE specific "nothing found this frame" exception types
+// (NotFoundException/ChecksumException/FormatException); any OTHER
+// error thrown mid-decode (plausible with TRY_HARDER hitting an edge
+// case on a real blurry/tilted frame) silently kills the loop for
+// good -- no crash, no visible error, camera picture keeps showing,
+// just never decodes another frame. That matches "still doesn't pick
+// it up" exactly. This loop instead ALWAYS reschedules regardless of
+// what a frame's decode attempt throws.
 
 (function () {
   const modal = document.getElementById('cameraScanModal');
@@ -17,75 +28,88 @@
   const closeBtn = document.getElementById('cameraScanCloseBtn');
 
   let reader = null;
-  let activeTargetInput = null;
+  let stream = null;
+  let stopped = true;
+  let attempts = 0;
 
   function stopScan() {
-    if (reader) {
-      try { reader.reset(); } catch (err) { /* already stopped */ }
-      reader = null;
+    stopped = true;
+    if (stream) {
+      stream.getTracks().forEach((t) => t.stop());
+      stream = null;
     }
+    video.srcObject = null;
     video.onclick = null;
+    reader = null;
     modal.hidden = true;
-    activeTargetInput = null;
   }
 
   closeBtn.addEventListener('click', stopScan);
+
+  function tick(targetInput) {
+    if (stopped) return;
+    attempts += 1;
+    try {
+      const result = reader.decode(video);
+      const text = result.getText();
+      stopScan();
+      targetInput.value = text;
+      targetInput.focus();
+      // Same as a physical scanner's Enter keystroke -- dispatch a real
+      // Enter keydown so every existing listener (one per scan input,
+      // see app.js) fires exactly as it already does today.
+      targetInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      return;
+    } catch (err) {
+      // Expected on almost every frame until a barcode lines up --
+      // NOT treated as fatal regardless of what it is (see header
+      // comment: that distinction is exactly what was killing the
+      // scan loop before).
+    }
+    status.textContent = `Point the camera at a barcode or QR code, filling most of the frame (tap the picture if it looks blurry)... (${attempts} frames checked)`;
+    setTimeout(() => tick(targetInput), 120);
+  }
 
   async function startScan(targetInput) {
     if (!window.ZXing) {
       alert("Camera scanning isn't available right now (library failed to load) -- use the keyboard/scanner input instead.");
       return;
     }
-    activeTargetInput = targetInput;
+    stopScan(); // in case a previous scan is somehow still active
+    stopped = false;
+    attempts = 0;
     modal.hidden = false;
     status.textContent = 'Starting camera...';
 
-    // Every label this app prints is Code128 (see production/planner/
-    // labels.py) -- restricting to that plus the handful of common
-    // formats someone might hand-scan keeps ZXing from spending every
-    // frame trying ~17 formats (slow on an older phone, and a big part
-    // of "takes a while and holding very still" -- confirmed live,
-    // 2026-09-29), and stops it confidently decoding a barcode that
-    // happens to be some OTHER symbology (e.g. a plain online Code128
-    // generator that silently fell back to EAN/UPC for a non-numeric
-    // input) as if it were a real scan.
+    // Code128 (every label this app prints, see production/planner/
+    // labels.py) and QR (easy to test with -- much more tolerant of
+    // blur/tilt than a 1D barcode, has its own finder pattern) as the
+    // two formats actually worth testing right now, plus common 1D
+    // fallbacks. TRY_HARDER: more scan rows/rotation attempts, worth it
+    // at 720p (not affordable at the 1080p an earlier attempt tried).
     const hints = new Map();
     hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
       window.ZXing.BarcodeFormat.CODE_128,
+      window.ZXing.BarcodeFormat.QR_CODE,
       window.ZXing.BarcodeFormat.EAN_13,
       window.ZXing.BarcodeFormat.EAN_8,
       window.ZXing.BarcodeFormat.UPC_A,
-      window.ZXing.BarcodeFormat.QR_CODE,
     ]);
-    // TRY_HARDER back on (removing it made no difference live,
-    // 2026-09-29 -- confirmed screenshots showed a slightly blurry,
-    // slightly tilted barcode, which is exactly what TRY_HARDER's extra
-    // scan rows/rotation attempts help with; the earlier "never scans
-    // at all" symptom was the 1920x1080 resolution, not this). Only
-    // affordable now paired with 720p, not 1080p -- see below.
     hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
     reader = new window.ZXing.BrowserMultiFormatReader(hints);
+
     try {
-      // Instance method, not static -- BrowserCodeReader.listVideoInputDevices
-      // (confirmed live, 2026-09-29: threw "is not a function" as a static
-      // call, camera modal showed a black screen).
       const devices = await reader.listVideoInputDevices();
       // Prefer the back/environment camera on a phone -- it's the one
       // actually pointed at a barcode, not the selfie camera.
       const backCamera = devices.find((d) => /back|rear|environment/i.test(d.label));
       const deviceId = (backCamera || devices[0])?.deviceId;
 
-      // 720p, NOT a higher resolution -- confirmed live, 2026-09-29:
-      // requesting 1920x1080 made scanning WORSE, not better (this
-      // decoder is pure JS with no hardware acceleration, so a bigger
-      // frame to binarize/scan per attempt means fewer attempts per
-      // second, and on a phone that was slow enough to never catch a
-      // real barcode at all even sitting still in frame). 720p is
-      // plenty of resolution for a barcode filling most of the frame,
-      // and lets the decode loop actually keep up. Continuous autofocus
-      // (where supported) still helps get a sharp image at that size --
-      // focusMode is an Android Chrome extension to the constraints
-      // spec, only added when the browser itself reports it.
+      // 720p -- confirmed live, 2026-09-29: 1920x1080 made scanning
+      // WORSE (this decoder is pure JS, no hardware acceleration --
+      // more pixels per attempt means fewer attempts per second, slow
+      // enough it never caught a real barcode at all). 720p is plenty
+      // for a barcode filling most of the frame, and keeps the loop fast.
       const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
       const videoConstraints = {
         deviceId: deviceId ? { exact: deviceId } : undefined,
@@ -97,40 +121,25 @@
         videoConstraints.advanced = [{ focusMode: 'continuous' }];
       }
 
-      // Tap-to-refocus: the visible blur in both test photos (2026-09-29)
-      // suggests the camera locked focus once at startup and never
-      // re-focused for a barcode held up close afterward -- continuous
-      // focusMode isn't honored by every phone's browser. Re-asserting
-      // it on tap gives a manual nudge on those phones; a no-op
-      // everywhere else (wrapped so an unsupported call never breaks
-      // the tap).
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+      video.srcObject = stream;
+      await video.play();
+
+      // Tap-to-refocus -- re-asserts continuous focusMode on tap, for
+      // phones whose camera locks focus once at startup and doesn't
+      // re-focus for a barcode held up close afterward (continuous
+      // isn't honored by every phone's browser). Best-effort, silently
+      // a no-op where unsupported.
       video.onclick = async () => {
         try {
-          const stream = video.srcObject;
-          const videoTrack = stream?.getVideoTracks?.()[0];
-          if (videoTrack && supported.focusMode) {
-            status.textContent = 'Refocusing...';
-            await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-            status.textContent = 'Point the camera at a barcode, filling most of the frame...';
+          const track = stream?.getVideoTracks?.()[0];
+          if (track && supported.focusMode) {
+            await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
           }
         } catch (err) { /* best-effort, ignore */ }
       };
 
-      status.textContent = 'Point the camera at a barcode, filling most of the frame (tap the picture if it looks blurry)...';
-      await reader.decodeFromConstraints({ video: videoConstraints }, video, (result, err) => {
-        if (result) {
-          const text = result.getText();
-          stopScan();
-          targetInput.value = text;
-          targetInput.focus();
-          // Same as a physical scanner's Enter keystroke -- dispatch a
-          // real Enter keydown so every existing listener (one per scan
-          // input, see app.js) fires exactly as it already does today.
-          targetInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
-        }
-        // NotFoundException fires continuously while nothing's in frame
-        // yet -- not an error, just "still looking".
-      });
+      tick(targetInput);
     } catch (err) {
       status.textContent = err?.name === 'NotAllowedError'
         ? 'Camera access denied -- allow camera access for this site, or use the keyboard/scanner input instead.'
