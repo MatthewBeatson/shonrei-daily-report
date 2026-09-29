@@ -190,6 +190,7 @@
             <button type="button" class="camera-scan-btn" data-target="paSkuInput" aria-label="Scan with camera">📷</button>
           </div>
         </div>
+        <div id="paSkuError" class="scan-error" hidden></div>
         <div>
           <button id="paSkuNextBtn">Next</button>
         </div>
@@ -229,7 +230,7 @@
         <span>Scan with camera</span>
         <button type="button" id="cameraScanCloseBtn" aria-label="Close">&times;</button>
       </div>
-      <video id="cameraScanVideo" playsinline></video>
+      <video id="cameraScanVideo" playsinline autoplay muted></video>
       <p id="cameraScanStatus" class="camera-scan-status">Starting camera...</p>
     </div>
   </div>

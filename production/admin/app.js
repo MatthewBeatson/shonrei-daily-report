@@ -617,6 +617,17 @@ async function saveAssignedLocation() {
   if (!locationCode) { setError('Pick a location first.'); return; }
   setError('');
   try {
+    // Backend enforces this regardless (refresh-service/warehouse.py's
+    // set_home_location) -- checked here too so a typo'd SKU is caught
+    // before the save round-trip, same reasoning as the floor app's own
+    // checkSkuExists.
+    const { exists } = await api(`/production/warehouse/sku-exists/${encodeURIComponent(sku)}`);
+    if (!exists) { setError(`"${sku}" isn't a real Cin7 SKU -- check for a typo.`); return; }
+  } catch (err) {
+    setError(`Couldn't check that SKU: ${err.message}`);
+    return;
+  }
+  try {
     const data = await api(`/production/warehouse/sku-locations/${encodeURIComponent(sku)}`, {
       method: 'PUT',
       body: JSON.stringify({ location_code: locationCode }),

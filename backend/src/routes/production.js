@@ -475,6 +475,28 @@ router.get('/warehouse/sku-locations/:sku', requireFloorOrProductionAuth, asyncH
   res.json({ sku: req.params.sku, location: rows[0] || null });
 }));
 
+// Floor + admin: real, live check -- does this SKU exist as a Cin7
+// product. Used before a scanned/typed SKU is submitted anywhere (the
+// backend routes above also enforce this server-side regardless -- see
+// refresh-service/warehouse.py and stocktake.py), so staff get told
+// "not a real SKU" immediately rather than only after a failed submit.
+router.get('/warehouse/sku-exists/:sku', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const data = await callRefreshService(`/cin7/sku-exists?sku=${encodeURIComponent(req.params.sku)}`, {}, 'GET');
+  res.json(data);
+}));
+
+// Floor + admin: does this location code exist in Warehouse Locations --
+// a local-only check (no Cin7 involved, locations are our own table),
+// same reasoning as sku-exists above but a direct Postgres read instead
+// of proxying to refresh-service, matching GET /warehouse/sku-locations/:sku.
+router.get('/warehouse/locations/by-code/:code', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const { rows } = await pool.query(
+    'select code, description, bay_code from warehouse.locations where upper(code) = upper($1)',
+    [req.params.code]
+  );
+  res.json({ location: rows[0] || null });
+}));
+
 router.get('/warehouse/putaway-scans', requireProductionAuth, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select id, sku, scanned_location_code, matched, scanned_by, scanned_at,

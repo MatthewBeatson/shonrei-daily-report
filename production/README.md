@@ -198,6 +198,25 @@ exact same lookup path a physical scan or manual typing already does.
 Needs HTTPS and camera permission (denied gracefully -- falls back to
 typing/the physical scanner).
 
+**Validation: existing SKUs/locations only.** Neither the floor app nor
+admin will accept a scanned/typed SKU or location code that doesn't
+already exist -- explicit requirement, 2026-09-29: the app must never
+quietly create a new one from a typo. SKU checks (`Cin7Client.sku_exists`,
+via `cin7_read.sku_exists` -- a real, live Cin7 lookup, same "always real"
+carve-out as the on-hand column) cover Stocktake's SKU field, Putaway's
+SKU field, and admin's "Assign a product's home location" tool. Location
+checks are a local `warehouse.locations` lookup (no Cin7 call needed,
+it's our own table) and cover Stocktake's area scan and Putaway's
+location scan. Enforced in both places: the floor app checks before
+submitting (so staff see it immediately, not just after a failed save),
+and `warehouse.py`/`stocktake.py` check again server-side regardless
+(`record_putaway_scan`, `set_home_location`, `record_count`) -- so this
+holds even for a request that skips the UI. A Cin7 lookup failure (a
+network hiccup, not "genuinely doesn't exist") is never folded into
+"accept it anyway" -- it's surfaced as its own error instead. This does
+NOT apply to admin's own "Add location" toolbar, which is the deliberate
+way a real location gets set up in the first place.
+
 **What's dry-run vs. real today:** the DB side (targets, demand lines,
 batches, actuals, the clamp-at-zero/close-at-zero math) is fully real --
 see the local end-to-end run below. Every Cin7 call

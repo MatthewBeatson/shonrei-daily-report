@@ -10,10 +10,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'production' / 'planner'))
 from putaway import check_putaway  # noqa: E402
+from cin7_read import sku_exists  # noqa: E402
 
 
 class WarehouseError(ValueError):
     pass
+
+
+def _require_real_sku(sku: str) -> None:
+    """Raises WarehouseError for a SKU that isn't a real Cin7 product --
+    the app must only ever record/assign a scanned or typed SKU that
+    actually exists, never quietly accept a typo/made-up one (explicit
+    requirement, 2026-09-29). A lookup failure (network/API hiccup, not
+    "genuinely doesn't exist") is deliberately NOT swallowed into a
+    pass -- surfaced as its own 502-worthy error by the caller instead
+    of silently letting an unverifiable SKU through.
+    """
+    try:
+        exists = sku_exists(sku)
+    except Exception as exc:  # noqa: BLE001
+        raise WarehouseError(f"Couldn't verify {sku!r} against Cin7 right now -- try again ({exc})") from exc
+    if not exists:
+        raise WarehouseError(f'{sku!r} is not a real Cin7 SKU -- check for a typo')
 
 
 def get_putaway_mismatch_mode(conn) -> str:
@@ -39,6 +57,8 @@ def set_putaway_mismatch_mode(conn, mode: str, updated_by: str | None = None) ->
 
 
 def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: str | None = None) -> dict:
+    _require_real_sku(sku)
+
     with conn.cursor() as cur:
         cur.execute(
             """select l.id, l.code, l.bay_code from warehouse.sku_locations sl
@@ -49,15 +69,19 @@ def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: 
         row = cur.fetchone()
     home_location_id, home_location_code, home_bay_code = row if row else (None, None, None)
 
-    # Bay code of wherever was actually scanned, if it resolves to a
-    # known location at all -- used only to classify a genuine mismatch
-    # as same-bay vs different-bay (see check_putaway). An unrecognised
-    # scanned code just means scanned_bay_code stays None, which
-    # check_putaway already treats as "not the same bay."
+    # The scanned location must itself be a real, already-set-up
+    # warehouse.locations row -- a typo'd/made-up code must never get
+    # silently recorded as if it were a genuine (if wrong) placement.
+    # This also gives us its bay code, used only to classify a genuine
+    # mismatch as same-bay vs different-bay (see check_putaway).
     with conn.cursor() as cur:
         cur.execute("select bay_code from warehouse.locations where upper(code) = upper(%s)", (scanned_location_code,))
         scanned_row = cur.fetchone()
-    scanned_bay_code = scanned_row[0] if scanned_row else None
+    if scanned_row is None:
+        raise WarehouseError(
+            f'{scanned_location_code!r} is not a location set up in Warehouse Locations -- check for a typo'
+        )
+    scanned_bay_code = scanned_row[0]
 
     result = check_putaway(
         scanned_location_code, home_location_code,
@@ -136,6 +160,8 @@ def set_home_location(conn, sku: str, location_code: str, cin7=None) -> dict:
     assignment, same "logging always wins" philosophy as
     record_count's Cin7 snapshot lookup.
     """
+    _require_real_sku(sku)
+
     with conn.cursor() as cur:
         cur.execute("select id, cin7_bin from warehouse.locations where code = %s", (location_code,))
         row = cur.fetchone()

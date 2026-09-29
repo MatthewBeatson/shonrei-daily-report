@@ -38,3 +38,15 @@ def get_on_hand_for_skus(skus: list[str]) -> dict[str, float | None]:
             print(f'get_on_hand_for_skus: could not read {sku!r}: {exc}', flush=True)
             result[sku] = None
     return result
+
+
+def sku_exists(sku: str) -> bool:
+    """Real, live check -- does this SKU exist as a Cin7 product at all.
+    Used to stop the floor/admin apps accepting a scanned or typed SKU
+    that isn't real (see warehouse.py / stocktake.py's callers). Unlike
+    get_on_hand_for_skus, a lookup failure here is NOT folded into
+    False -- "couldn't check" must never be treated the same as "not a
+    real SKU", so this lets the exception propagate for the caller to
+    handle as a distinct case.
+    """
+    return get_real_cin7_client().sku_exists(sku)

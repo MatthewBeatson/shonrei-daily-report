@@ -121,6 +121,23 @@ document.getElementById('printBatchLabelBtn').addEventListener('click', async ()
   }
 });
 
+// Shared existing-SKU / existing-location checks -- staff must only be
+// able to scan/type a SKU that's a real Cin7 product, or a location
+// that's actually set up in Warehouse Locations, never have the app
+// silently accept a typo'd/made-up one (explicit requirement,
+// 2026-09-29). The backend routes this calls also enforce this
+// server-side regardless (see refresh-service/warehouse.py and
+// stocktake.py) -- this is just the up-front check so staff find out
+// immediately, not only after a failed submit.
+async function checkSkuExists(sku) {
+  const { exists } = await apiFetch(`/production/warehouse/sku-exists/${encodeURIComponent(sku)}`);
+  return exists;
+}
+async function checkLocationExists(code) {
+  const { location } = await apiFetch(`/production/warehouse/locations/by-code/${encodeURIComponent(code)}`);
+  return !!location;
+}
+
 async function lookupBatchCode(code) {
   scanError.hidden = true;
   if (!code) return;
@@ -352,9 +369,21 @@ async function loadStocktakeBanner() {
 // every SKU counted next -- same barcode putaway already uses, not a
 // typed/picked area name (production/README.md "Labels & warehouse
 // locations"). Stays set until "Change area".
-function setStArea(code) {
+async function setStArea(code) {
   stAreaError.hidden = true;
   if (!code) return;
+  try {
+    if (!(await checkLocationExists(code))) {
+      stAreaError.textContent = `"${code}" isn't a location set up in Warehouse Locations -- check for a typo, or ask admin to add it.`;
+      stAreaError.hidden = false;
+      stAreaInput.select();
+      return;
+    }
+  } catch (err) {
+    stAreaError.textContent = `Couldn't check that location: ${err.message}`;
+    stAreaError.hidden = false;
+    return;
+  }
   currentStArea = code;
   document.getElementById('stCurrentAreaCode').textContent = code;
   stAreaStep.hidden = true;
@@ -379,6 +408,18 @@ function clearStArea() {
 async function openStocktakeSku(sku, viaCode) {
   stScanError.hidden = true;
   if (!sku) return;
+  try {
+    if (!(await checkSkuExists(sku))) {
+      stScanError.textContent = `"${sku}" isn't a real Cin7 SKU -- check for a typo.`;
+      stScanError.hidden = false;
+      stSkuInput.select();
+      return;
+    }
+  } catch (err) {
+    stScanError.textContent = `Couldn't check that SKU: ${err.message}`;
+    stScanError.hidden = false;
+    return;
+  }
   currentStSku = sku;
   stViaCode = viaCode;
   stQty = 0;
@@ -486,6 +527,20 @@ paAgainBtn.addEventListener('click', resetToPaScan);
 async function goToPaLocationStep() {
   const sku = paSkuInput.value.trim();
   if (!sku) return;
+  const paSkuError = document.getElementById('paSkuError');
+  paSkuError.hidden = true;
+  try {
+    if (!(await checkSkuExists(sku))) {
+      paSkuError.textContent = `"${sku}" isn't a real Cin7 SKU -- check for a typo.`;
+      paSkuError.hidden = false;
+      paSkuInput.select();
+      return;
+    }
+  } catch (err) {
+    paSkuError.textContent = `Couldn't check that SKU: ${err.message}`;
+    paSkuError.hidden = false;
+    return;
+  }
   paSku = sku;
   document.getElementById('paSkuLine').textContent = sku;
   paSkuStep.hidden = true;
@@ -569,7 +624,13 @@ async function submitPutawayScan() {
     paLocationStep.hidden = true;
     paResultStep.hidden = false;
   } catch (err) {
-    alert(`Couldn't submit: ${err.message}`);
+    // Includes the "not a real location" rejection from the backend
+    // (see refresh-service/warehouse.py's record_putaway_scan) -- shown
+    // inline the same way a 'block' mismatch is, not as an alert, so
+    // staff can just fix the scan and try again without an extra tap.
+    blockError.textContent = err.message;
+    blockError.hidden = false;
+    paLocationInput.select();
   } finally {
     btn.disabled = false;
   }
@@ -582,5 +643,6 @@ function resetToPaScan() {
   paResultStep.hidden = true;
   paAgainBtn.hidden = true;
   paSkuInput.value = '';
+  document.getElementById('paSkuError').hidden = true;
   paSkuInput.focus();
 }

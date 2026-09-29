@@ -908,6 +908,22 @@ class Cin7Client:
         self._raise_for_status_with_body(resp)
         return resp.json().get("StockAdjustmentList") or []
 
+    def sku_exists(self, sku: str) -> bool:
+        """True if `sku` is a real Cin7 product (GET /product?SKU=sku
+        returns a match) -- False only when Cin7 genuinely has no such
+        product (the documented "no Products in the response" shape,
+        see _get_product's ValueError). Any other failure (network/API
+        error) is left to propagate rather than folded into False --
+        callers validating a scanned/typed SKU need to tell "not a real
+        SKU" apart from "couldn't check right now", see
+        production/README.md "Validation: existing SKUs/locations only."
+        """
+        try:
+            self._get_product(sku)
+            return True
+        except ValueError:
+            return False
+
     def update_product_default_location(self, sku: str, location_code: str) -> None:
         """Push `location_code` as Cin7's own product `DefaultLocation`
         field -- confirmed design, 2026-09-17: assigning a SKU's home

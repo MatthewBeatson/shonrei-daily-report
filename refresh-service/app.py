@@ -37,7 +37,7 @@ from warehouse import (
     WarehouseError, record_putaway_scan, set_home_location,
     get_putaway_mismatch_mode, set_putaway_mismatch_mode,
 )
-from cin7_read import get_on_hand_for_skus
+from cin7_read import get_on_hand_for_skus, sku_exists
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 
 app = Flask(__name__)
@@ -108,6 +108,29 @@ def cin7_on_hand():
     if not skus:
         return jsonify({'error': 'skus query param is required (comma-separated)'}), 400
     return jsonify({'on_hand': get_on_hand_for_skus(skus)}), 200
+
+
+@app.get('/cin7/sku-exists')
+def cin7_sku_exists():
+    """Real, live Cin7 product-existence check -- READ ONLY, same
+    "always real Cin7" carve-out as /cin7/on-hand. Used by the floor/
+    admin apps to stop accepting a scanned/typed SKU that isn't a real
+    Cin7 product before it's even submitted, rather than only rejecting
+    it after the fact (record_putaway_scan/set_home_location/
+    record_count also enforce this server-side regardless).
+
+    Query param: sku=<one SKU>.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    sku = (request.args.get('sku') or '').strip()
+    if not sku:
+        return jsonify({'error': 'sku query param is required'}), 400
+    try:
+        exists = sku_exists(sku)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({'error': f"Couldn't verify against Cin7 right now: {exc}"}), 502
+    return jsonify({'sku': sku, 'exists': exists}), 200
 
 
 @app.get('/health')
@@ -424,7 +447,11 @@ def warehouse_putaway_scan():
 
     conn = get_conn()
     try:
-        result = record_putaway_scan(conn, sku, scanned_location_code, payload.get('scanned_by'))
+        try:
+            result = record_putaway_scan(conn, sku, scanned_location_code, payload.get('scanned_by'))
+        except WarehouseError as exc:
+            conn.rollback()
+            return jsonify({'error': str(exc)}), 400
     finally:
         conn.close()
 

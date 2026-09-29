@@ -41,7 +41,10 @@
 
     reader = new window.ZXing.BrowserMultiFormatReader();
     try {
-      const devices = await window.ZXing.BrowserCodeReader.listVideoInputDevices();
+      // Instance method, not static -- BrowserCodeReader.listVideoInputDevices
+      // (confirmed live, 2026-09-29: threw "is not a function" as a static
+      // call, camera modal showed a black screen).
+      const devices = await reader.listVideoInputDevices();
       // Prefer the back/environment camera on a phone -- it's the one
       // actually pointed at a barcode, not the selfie camera.
       const backCamera = devices.find((d) => /back|rear|environment/i.test(d.label));

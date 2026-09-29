@@ -61,6 +61,7 @@ here re-opens one yet -- every push still creates its own fresh
 Draft->Completed adjustment, the one proven-safe pattern so far).
 """
 from __future__ import annotations
+from cin7_read import sku_exists
 
 
 class StocktakeError(ValueError):
@@ -94,15 +95,34 @@ def record_count(
 ) -> dict:
     """Writes the count, snapshotting Cin7's on-hand qty for `sku` at this
     moment if the get_stock_on_hand call succeeds -- a variance is
-    nice-to-have, not a precondition for logging a count. Deliberately
-    broad except: NotImplementedError (a client that hasn't wired this
-    up yet), a bad/unknown SKU, and a live Cin7 network/API hiccup all
-    fail the same way here -- on_hand stays None and the count still
-    gets written. Only counted_qty's own validation above is allowed to
-    actually stop the count from being recorded.
+    nice-to-have, not a precondition for logging a count.
+
+    `sku` must be a real Cin7 product -- checked up front and raises
+    StocktakeError if not (explicit requirement, 2026-09-29: the app
+    must never record a count against a typo'd/made-up SKU). `location`
+    (if given -- staff scan a warehouse.locations barcode to set the
+    counting area) is checked the same way, against the local table.
+    Once the SKU is confirmed real, the on-hand snapshot below stays
+    best-effort (nice-to-have, not a precondition) -- a network/API
+    hiccup there still lets the count through with on_hand left None.
     """
     if counted_qty < 0:
         raise StocktakeError('counted_qty must be >= 0')
+
+    try:
+        sku_is_real = sku_exists(sku)
+    except Exception as exc:  # noqa: BLE001
+        raise StocktakeError(f"Couldn't verify {sku!r} against Cin7 right now -- try again ({exc})") from exc
+    if not sku_is_real:
+        raise StocktakeError(f'{sku!r} is not a real Cin7 SKU -- check for a typo')
+
+    if location is not None:
+        with conn.cursor() as cur:
+            cur.execute("select 1 from warehouse.locations where upper(code) = upper(%s)", (location,))
+            if cur.fetchone() is None:
+                raise StocktakeError(
+                    f'{location!r} is not a location set up in Warehouse Locations -- check for a typo'
+                )
 
     try:
         on_hand = cin7.get_stock_on_hand(sku)
