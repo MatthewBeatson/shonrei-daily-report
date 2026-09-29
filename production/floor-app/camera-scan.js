@@ -39,7 +39,25 @@
     modal.hidden = false;
     status.textContent = 'Starting camera...';
 
-    reader = new window.ZXing.BrowserMultiFormatReader();
+    // Every label this app prints is Code128 (see production/planner/
+    // labels.py) -- restricting to that plus the handful of common
+    // formats someone might hand-scan keeps ZXing from spending every
+    // frame trying ~17 formats (slow on an older phone, and a big part
+    // of "takes a while and holding very still" -- confirmed live,
+    // 2026-09-29), and stops it confidently decoding a barcode that
+    // happens to be some OTHER symbology (e.g. a plain online Code128
+    // generator that silently fell back to EAN/UPC for a non-numeric
+    // input) as if it were a real scan.
+    const hints = new Map();
+    hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+      window.ZXing.BarcodeFormat.CODE_128,
+      window.ZXing.BarcodeFormat.EAN_13,
+      window.ZXing.BarcodeFormat.EAN_8,
+      window.ZXing.BarcodeFormat.UPC_A,
+      window.ZXing.BarcodeFormat.QR_CODE,
+    ]);
+    hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+    reader = new window.ZXing.BrowserMultiFormatReader(hints);
     try {
       // Instance method, not static -- BrowserCodeReader.listVideoInputDevices
       // (confirmed live, 2026-09-29: threw "is not a function" as a static
@@ -50,8 +68,27 @@
       const backCamera = devices.find((d) => /back|rear|environment/i.test(d.label));
       const deviceId = (backCamera || devices[0])?.deviceId;
 
-      status.textContent = 'Point the camera at a barcode...';
-      await reader.decodeFromVideoDevice(deviceId, video, (result, err) => {
+      // A closer, higher-resolution feed with continuous autofocus reads
+      // a small barcode far more reliably than the browser's low-res
+      // default -- phone cameras otherwise often stay focused for
+      // general video, not a barcode held close. focusMode is an
+      // Android Chrome extension to the constraints spec (not
+      // universally supported) -- only added when the browser itself
+      // reports it, an unsupported advanced constraint is otherwise
+      // silently ignored per spec anyway, this is just belt-and-braces.
+      const supported = navigator.mediaDevices?.getSupportedConstraints?.() || {};
+      const videoConstraints = {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        facingMode: deviceId ? undefined : { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      };
+      if (supported.focusMode) {
+        videoConstraints.advanced = [{ focusMode: 'continuous' }];
+      }
+
+      status.textContent = 'Point the camera at a barcode, filling most of the frame...';
+      await reader.decodeFromConstraints({ video: videoConstraints }, video, (result, err) => {
         if (result) {
           const text = result.getText();
           stopScan();
