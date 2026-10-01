@@ -301,7 +301,7 @@ router.post('/targets/sync', requireProductionEdit, asyncHandler(async (req, res
 // carries `summary` (one row per SKU) once done, for review before
 // syncing, plus `demand_lines_by_sku` ready to send straight to
 // POST /targets/sync above.
-router.post('/demand/pull', requireProductionEdit, asyncHandler(async (req, res) => {
+router.post('/demand/pull', requireProductionAuth, asyncHandler(async (req, res) => {
   res.json(await callRefreshService('/production/demand/pull', {}));
 }));
 
