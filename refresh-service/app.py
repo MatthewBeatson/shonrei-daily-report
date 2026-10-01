@@ -39,6 +39,7 @@ from warehouse import (
 )
 from cin7_read import get_on_hand_for_skus, sku_exists
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
+import open_orders_xlsx
 
 app = Flask(__name__)
 
@@ -621,6 +622,40 @@ def label_batch(batch_id):
 
     zpl = batch_label_zpl(batch_code, sku, float(qty_planned), priority_rank)
     return _zpl_response(zpl, f'batch-{batch_code}.zpl')
+
+
+# -- Total Product on Order (production admin download) --------------
+# Real Cin7, READ ONLY -- same carve-out as /cin7/on-hand. Takes minutes
+# on a cold cache, so: POST .../start kicks off a background build, GET
+# .../status is polled, GET .../download returns the finished .xlsx.
+# See open_orders_xlsx.py.
+
+@app.post('/reports/open-orders/start')
+def open_orders_start():
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    return jsonify(open_orders_xlsx.start_build()), 202
+
+
+@app.get('/reports/open-orders/status')
+def open_orders_status():
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    return jsonify(open_orders_xlsx.job_state()), 200
+
+
+@app.get('/reports/open-orders/download')
+def open_orders_download():
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    data, filename = open_orders_xlsx.get_file()
+    if not data:
+        return jsonify({'error': 'No file built yet -- click Download to build one.'}), 404
+    return Response(
+        data,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
 
 
 if __name__ == '__main__':

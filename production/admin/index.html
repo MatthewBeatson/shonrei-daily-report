@@ -46,6 +46,23 @@
     <div class="error-text" id="admin-error"></div>
     <div class="success-text" id="admin-success"></div>
 
+    <!-- TOTAL PRODUCT ON ORDER -->
+    <div class="report-section">
+      <div class="section-header">TOTAL PRODUCT ON ORDER</div>
+      <div class="section-body">
+        <p class="sub">
+          Every authorised, not-yet-invoiced sales order line in Cin7 (the same
+          orders as the daily report's "Sales on hand"), as Excel with a SKU
+          Summary sheet. Pulled live from Cin7 -- the first download of the day
+          can take 2-3 minutes; after that only changed orders are re-read.
+        </p>
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="open-orders-btn">Download</button>
+          <span class="sub" id="open-orders-status"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- TARGETS -->
     <div class="report-section">
       <div class="section-header">TARGETS</div>

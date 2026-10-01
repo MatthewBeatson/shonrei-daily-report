@@ -47,7 +47,11 @@ async function callRefreshService(path, body, method = 'POST') {
     response = await fetch(`${refreshUrl}${path}`, {
       method,
       headers: { 'Content-Type': 'application/json', 'X-Refresh-Secret': sharedSecret },
-      body: JSON.stringify(body || {}),
+      // fetch() throws on a GET/HEAD with a body ("Request with GET/HEAD
+      // method cannot have body") -- that surfaced as the generic
+      // "couldn't reach the refresh service" error on every GET proxied
+      // through here (e.g. /targets/cin7-on-hand).
+      ...(method === 'GET' || method === 'HEAD' ? {} : { body: JSON.stringify(body || {}) }),
     });
   } catch (err) {
     throw new ApiError(502, "Couldn't reach the refresh service -- it may be waking up. Try again in a moment.");
@@ -243,6 +247,23 @@ router.get('/targets/cin7-on-hand', requireProductionAuth, asyncHandler(async (r
   if (!skus) throw new ApiError(400, 'skus query param is required (comma-separated)');
   const data = await callRefreshService(`/cin7/on-hand?skus=${encodeURIComponent(skus)}`, {}, 'GET');
   res.json(data);
+}));
+
+// Total Product on Order -- every authorised-but-not-invoiced Cin7 SO
+// line (the daily report's "Sales on hand" set) as an .xlsx with the SKU
+// Summary sheet. Built in the background on the refresh service (a cold
+// build is minutes of rate-limited Cin7 reads): start -> poll status ->
+// download. See refresh-service/open_orders_xlsx.py.
+router.post('/open-orders/start', requireProductionAuth, asyncHandler(async (req, res) => {
+  res.json(await callRefreshService('/reports/open-orders/start', {}));
+}));
+
+router.get('/open-orders/status', requireProductionAuth, asyncHandler(async (req, res) => {
+  res.json(await callRefreshService('/reports/open-orders/status', null, 'GET'));
+}));
+
+router.get('/open-orders/download', requireProductionAuth, asyncHandler(async (req, res) => {
+  await streamRefreshServiceFile('/reports/open-orders/download', res);
 }));
 
 router.get('/targets/:targetId/demand-lines', requireProductionAuth, asyncHandler(async (req, res) => {
