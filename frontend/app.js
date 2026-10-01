@@ -330,7 +330,9 @@
   }
 
   // Renders one dashboard row. valueClass: 'imported' | 'manual' | 'calculated'
-  function renderRow({ label, bold, value, valueClass, source, refreshedAt, status, editable }) {
+  // note: optional small annotation under the value (e.g. unreconciled
+  // bank lines) -- noteWarn highlights it when it's worth a second look.
+  function renderRow({ label, bold, value, valueClass, source, refreshedAt, status, editable, note, noteWarn }) {
     const rowClass = valueClass === 'calculated' ? 'calculated' : valueClass === 'manual' ? 'manual' : '';
     const valColorClass = valueClass === 'manual' ? 'manual-color' : valueClass === 'calculated' ? 'neutral' : (typeof value === 'string' && value.startsWith('(') ? 'negative' : '');
     return `
@@ -338,6 +340,7 @@
         <div class="metric-label ${bold ? 'bold' : ''}">${label}</div>
         <div class="metric-value-col">
           <div class="metric-value ${valColorClass}">${value}</div>
+          ${note ? `<div class="metric-note${noteWarn ? ' warn' : ''}">${note}</div>` : ''}
           <div class="metric-meta">
             ${source ? `<span>${source}</span>` : ''}
             ${refreshedAt ? `<span>${refreshedAt}</span>` : ''}
@@ -362,9 +365,22 @@
     errBox.textContent = refresh_state?.status === 'running' ? 'Refreshing… figures below are from the last completed refresh.' : '';
 
     // ---- Cash position ----
+    // Unreconciled bank lines: tells management whether the balance above
+    // is likely caught up to the real bank position, or there's activity
+    // sitting in the bank feed Xero hasn't matched to a transaction yet.
+    // Only shown when that check itself succeeded -- silence here just
+    // means "not checked this refresh", not "nothing outstanding".
+    let bankNote = null;
+    let bankNoteWarn = false;
+    if (snapshot?.bank_unreconciled_status === 'ok') {
+      const unreconciled = Number(snapshot.bank_unreconciled_total ?? 0);
+      bankNote = `${fmtMoney(unreconciled)} unreconciled`;
+      bankNoteWarn = Math.abs(unreconciled) >= 1;
+    }
     $('row-bank').innerHTML = renderRow({
       label: 'Bank balances — NZD equivalent', value: fmtMoney(snapshot?.bank_balance), valueClass: 'imported',
       source: 'Xero', refreshedAt: fmtTime(snapshot?.as_of), status: snapshot?.bank_status,
+      note: bankNote, noteWarn: bankNoteWarn,
     });
     $('row-net-short-term').innerHTML = renderRow({
       label: 'Net short-term position', bold: true, value: fmtMoney(calculated?.net_short_term_position),

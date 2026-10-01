@@ -229,6 +229,11 @@ button {
 .metric-value.neutral { color: var(--text); }
 .metric-value.negative { color: var(--red); }
 .metric-meta { font-size: 0.72rem; color: var(--gray); display: flex; gap: 8px; }
+.metric-note { font-size: 0.75rem; color: var(--gray); }
+.metric-note.warn { color: #b45309; font-weight: 600; }
+@media (prefers-color-scheme: dark) {
+  .metric-note.warn { color: #fbbf24; }
+}
 
 .edit-inline-btn {
   background: none; border: 1px solid var(--border); border-radius: 6px;
