@@ -313,6 +313,7 @@ async function pullDemandFromCin7() {
     }
     table.hidden = false;
     syncRow.hidden = state.summary.length === 0;
+    document.getElementById('sync-sku-filter-hint').hidden = state.summary.length === 0;
     statusEl.textContent = `${state.orders} orders -> ${state.sku_count} SKUs -- pulled ${fmtDate(state.finished_at)}`;
   } catch (err) {
     statusEl.textContent = '';
@@ -359,17 +360,64 @@ async function syncDemand() {
   await applyTargetSync(demandBySku);
 }
 
+// A blank filter syncs every pulled SKU, same as before. A filled-in
+// filter (comma-separated SKUs) trials just those -- for a controlled
+// first real-Cin7 test, at most that many assemblies get
+// created/adjusted/closed, everything else pulled is left untouched
+// and still sitting there to sync later.
 async function syncPulledDemand() {
   if (!pulledDemandBySku || Object.keys(pulledDemandBySku).length === 0) {
     setError('Pull from Cin7 first.');
     return;
   }
-  await applyTargetSync(pulledDemandBySku, {
+
+  const filterInput = document.getElementById('sync-sku-filter');
+  const requested = filterInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+
+  let demandBySku = pulledDemandBySku;
+  let syncedSkus = Object.keys(pulledDemandBySku);
+  let notFound = [];
+
+  if (requested.length > 0) {
+    const bySkuUpper = new Map(Object.keys(pulledDemandBySku).map((sku) => [sku.toUpperCase(), sku]));
+    demandBySku = {};
+    syncedSkus = [];
+    for (const want of requested) {
+      const actualSku = bySkuUpper.get(want.toUpperCase());
+      if (actualSku) {
+        demandBySku[actualSku] = pulledDemandBySku[actualSku];
+        syncedSkus.push(actualSku);
+      } else {
+        notFound.push(want);
+      }
+    }
+    if (syncedSkus.length === 0) {
+      setError(`None of those are in the pulled demand (no current backorder, or a typo?): ${notFound.join(', ')}`);
+      return;
+    }
+  }
+
+  // applyTargetSync's own setSuccess() runs first (inside it, before
+  // onDone) -- the not-found note is appended after, here, so it isn't
+  // overwritten by that success message.
+  await applyTargetSync(demandBySku, {
     onDone: () => {
-      document.getElementById('pulled-demand-table').hidden = true;
-      document.getElementById('pulled-demand-sync-row').hidden = true;
-      document.getElementById('pull-demand-status').textContent = '';
-      pulledDemandBySku = null;
+      for (const sku of syncedSkus) delete pulledDemandBySku[sku];
+      for (const tr of document.querySelectorAll('#pulled-demand-tbody tr')) {
+        if (syncedSkus.includes(tr.firstElementChild.textContent)) tr.remove();
+      }
+      const remaining = Object.keys(pulledDemandBySku).length;
+      if (remaining === 0) {
+        document.getElementById('pulled-demand-table').hidden = true;
+        document.getElementById('pulled-demand-sync-row').hidden = true;
+        document.getElementById('sync-sku-filter-hint').hidden = true;
+        document.getElementById('pull-demand-status').textContent = '';
+        pulledDemandBySku = null;
+      }
+      filterInput.value = '';
+      if (notFound.length > 0) {
+        setError(`Synced ${syncedSkus.join(', ')}. Not in the pulled demand (no current backorder, or a typo?): ${notFound.join(', ')}`);
+      }
     },
   });
 }

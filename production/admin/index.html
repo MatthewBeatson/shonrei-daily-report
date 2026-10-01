@@ -106,8 +106,14 @@
           <tbody id="pulled-demand-tbody"></tbody>
         </table>
         <div class="admin-toolbar" id="pulled-demand-sync-row" hidden>
+          <input type="text" id="sync-sku-filter" placeholder="Only these SKUs, e.g. PT20012ESWL, VT14189WSWL" style="min-width:320px;">
           <button class="btn-primary" id="sync-pulled-demand-btn">Sync targets from this pull</button>
         </div>
+        <p class="sub" id="sync-sku-filter-hint" hidden>
+          Leave the SKU box blank to sync every SKU above. Fill it in (comma-separated)
+          to trial just those -- e.g. for a first real-Cin7 test, limited to at most that many
+          assemblies created/touched, everything else above is left alone.
+        </p>
 
         <p class="sub" style="margin-top:16px;"><strong>Or enter by hand</strong>
           -- one row per backordered SO line, for a correction or a SKU the
