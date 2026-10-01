@@ -374,6 +374,45 @@ def bank_summary_total(report, names):
     return total
 
 
+def xero_unreconciled_bank_total(token, tenant, bank_account_names):
+    # Net NZD-equivalent effect of bank transaction lines Xero has
+    # imported from the bank feed but nobody has reconciled (matched to an
+    # invoice/bill payment or coded) yet -- i.e. real money movement the
+    # "Bank balances" ledger figure doesn't reflect yet. Positive = more
+    # has come in than gone out among the unreconciled lines (balance
+    # above is probably understated); negative = the reverse.
+    #
+    # Only counts lines against the SAME bank accounts bank_summary_total
+    # sums, matched the same way (case-insensitive substring on account
+    # name) -- an unreconciled line on an account that isn't part of the
+    # reported bank balance shouldn't affect this either.
+    names = [n.lower() for n in bank_account_names]
+    total = 0.0
+    page = 1
+    while True:
+        data = xero_get(token, tenant, 'BankTransactions', {
+            'where': 'IsReconciled==false', 'page': page, 'order': 'Date',
+        })
+        txns = data.get('BankTransactions') or []
+        for t in txns:
+            account_name = str((t.get('BankAccount') or {}).get('Name') or '').lower()
+            if names and not any(n in account_name for n in names):
+                continue
+            rate = num(t.get('CurrencyRate')) or 1.0
+            amount = num(t.get('Total')) * rate
+            # Xero reports Total as a positive magnitude regardless of
+            # direction -- the Type field carries the sign.
+            if norm(t.get('Type')).startswith('SPEND'):
+                amount = -amount
+            total += amount
+        if len(txns) < 100:
+            break
+        page += 1
+        if page > 100:
+            raise RuntimeError('Xero BankTransactions pagination exceeded 100 pages.')
+    return total
+
+
 # ============================================================
 # Cin7 Core
 # ============================================================
@@ -567,6 +606,7 @@ def run_refresh(triggered_by=None):
 
         result = {
             'bank_balance': None, 'bank_status': 'error',
+            'bank_unreconciled_total': None, 'bank_unreconciled_status': 'error',
             'sales_mtd': None, 'sales_prev_month': None,
             'sales_previous_workday': None, 'sales_previous_workday_date': None,
             'sales_previous_workday_status': 'error',
@@ -626,8 +666,22 @@ def run_refresh(triggered_by=None):
             except Exception:
                 log_step(conn, 'Xero', 'Previous workday sales', 'ERROR', traceback.format_exc(), triggered_by)
 
+            # Also its own try/except, same reasoning -- a failure pulling
+            # unreconciled bank lines must never take the bank balance (or
+            # anything else) down with it.
+            unreconciled_total = None
+            unreconciled_status = 'error'
+            try:
+                unreconciled_total = xero_unreconciled_bank_total(
+                    token, tenant, split(cfg.get('xero_bank_account_names'))
+                )
+                unreconciled_status = 'ok'
+            except Exception:
+                log_step(conn, 'Xero', 'Unreconciled bank lines', 'ERROR', traceback.format_exc(), triggered_by)
+
             result.update({
                 'bank_balance': bank, 'bank_status': 'ok',
+                'bank_unreconciled_total': unreconciled_total, 'bank_unreconciled_status': unreconciled_status,
                 'sales_mtd': sales, 'sales_prev_month': prior_sales,
                 'sales_previous_workday': workday_sales, 'sales_previous_workday_date': previous_workday,
                 'sales_previous_workday_status': workday_status,
@@ -641,7 +695,8 @@ def run_refresh(triggered_by=None):
             prior_matched_text = '; '.join(f'{n}={v:.2f}' for n, v in prior_matched_rows)
             workday_matched_text = '; '.join(f'{n}={v:.2f}' for n, v in workday_matched_rows)
             log_step(conn, 'Xero', 'Refresh', 'OK',
-                     f'Bank={bank}; Sales MTD={sales} from [{matched_text}]; '
+                     f'Bank={bank}; Unreconciled bank lines={unreconciled_total} ({unreconciled_status}); '
+                     f'Sales MTD={sales} from [{matched_text}]; '
                      f'Previous month sales={prior_sales} from [{prior_matched_text}]; '
                      f'Previous workday ({previous_workday.isoformat()}) sales={workday_sales} from [{workday_matched_text}]; '
                      f'Debtors={debt}; Not yet due={debt_not_due}; Due/overdue={debt_overdue}; '
@@ -674,15 +729,18 @@ def run_refresh(triggered_by=None):
             cur.execute(
                 """
                 insert into reporting.report_snapshots
-                  (as_of, bank_balance, bank_status, sales_mtd, sales_prev_month,
+                  (as_of, bank_balance, bank_status, bank_unreconciled_total, bank_unreconciled_status,
+                   sales_mtd, sales_prev_month,
                    sales_previous_workday, sales_previous_workday_date, sales_previous_workday_status, sales_status,
                    sales_on_hand, sales_on_hand_status, debtors_total, debtors_not_due, debtors_overdue,
                    debtors_status, creditors_total, creditors_nzd_payables, creditors_status,
                    overall_status, triggered_by)
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 returning id
                 """,
-                (now, result['bank_balance'], result['bank_status'], result['sales_mtd'],
+                (now, result['bank_balance'], result['bank_status'],
+                 result['bank_unreconciled_total'], result['bank_unreconciled_status'],
+                 result['sales_mtd'],
                  result['sales_prev_month'], result['sales_previous_workday'], result['sales_previous_workday_date'],
                  result['sales_previous_workday_status'], result['sales_status'], result['sales_on_hand'],
                  result['sales_on_hand_status'], result['debtors_total'], result['debtors_not_due'],
