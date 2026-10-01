@@ -37,7 +37,7 @@ from warehouse import (
     WarehouseError, record_putaway_scan, set_home_location,
     get_putaway_mismatch_mode, set_putaway_mismatch_mode,
 )
-from cin7_read import get_on_hand_for_skus, sku_exists, get_real_cin7_client
+from cin7_read import get_on_hand_for_skus, get_availability_for_skus, sku_exists, get_real_cin7_client
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 import open_orders_xlsx
 import demand_sync
@@ -110,6 +110,28 @@ def cin7_on_hand():
     if not skus:
         return jsonify({'error': 'skus query param is required (comma-separated)'}), 400
     return jsonify({'on_hand': get_on_hand_for_skus(skus)}), 200
+
+
+@app.get('/cin7/availability')
+def cin7_availability():
+    """Real Cin7 on-hand/allocated/available for the given SKUs -- READ
+    ONLY, same "always real Cin7" carve-out as /cin7/on-hand. Unlike
+    /cin7/on-hand (just the on-hand figure), this also surfaces
+    Allocated -- Cin7's own figure for stock already committed to
+    orders, distinct from this app's own "qty backordered" (computed
+    from order/invoice status) -- see Cin7Client.get_availability_
+    detail's docstring. Feeds the admin page's pulled-demand review
+    table.
+
+    Query param: skus=SKU1,SKU2,... (comma-separated).
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    skus_param = request.args.get('skus', '')
+    skus = [s.strip() for s in skus_param.split(',') if s.strip()]
+    if not skus:
+        return jsonify({'error': 'skus query param is required (comma-separated)'}), 400
+    return jsonify({'availability': get_availability_for_skus(skus)}), 200
 
 
 @app.get('/cin7/sku-exists')

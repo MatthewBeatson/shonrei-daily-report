@@ -40,6 +40,24 @@ def get_on_hand_for_skus(skus: list[str]) -> dict[str, float | None]:
     return result
 
 
+def get_availability_for_skus(skus: list[str]) -> dict[str, dict | None]:
+    """SKU -> {"on_hand", "allocated", "available"} (see
+    Cin7Client.get_availability_detail's docstring for why Allocated/
+    OnHand specifically, not just the netted figure). Same per-SKU
+    best-effort shape as get_on_hand_for_skus -- a lookup failure for
+    one SKU comes back None for that SKU, never fails the whole batch.
+    """
+    client = get_real_cin7_client()
+    result: dict[str, dict | None] = {}
+    for sku in skus:
+        try:
+            result[sku] = client.get_availability_detail([sku])[sku]
+        except Exception as exc:  # noqa: BLE001 -- best-effort per SKU, see docstring
+            print(f'get_availability_for_skus: could not read {sku!r}: {exc}', flush=True)
+            result[sku] = None
+    return result
+
+
 def sku_exists(sku: str) -> bool:
     """Real, live check -- does this SKU exist as a Cin7 product at all.
     Used to stop the floor/admin apps accepting a scanned or typed SKU

@@ -255,6 +255,14 @@ async function planBatches(targetId, sku, runSizeStr) {
 // POST /production/targets/sync wants, built server-side (see
 // refresh-service/demand_sync.py), nothing to re-derive here.
 let pulledDemandBySku = null;
+// One row per SKU for the review table -- qty/so_count come with the
+// pull itself; allocated/on_hand start null and fill in once the
+// separate (real-Cin7) availability call returns, see
+// loadCin7AvailabilityForPulledDemand. Sorting reads straight from this
+// array, never the DOM, so a sort stays correct whether or not that
+// fill-in has landed yet.
+let pulledDemandSummary = [];
+let pulledDemandSort = { key: 'qty', dir: 'desc' };
 
 async function applyTargetSync(demandBySku, { onDone } = {}) {
   const resultEl = document.getElementById('sync-result');
@@ -301,25 +309,74 @@ async function pullDemandFromCin7() {
     if (state.status !== 'done') throw new Error(state.error || 'The pull failed -- try again.');
 
     pulledDemandBySku = state.demand_lines_by_sku;
-    tbody.innerHTML = '';
-    for (const row of state.summary) {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>${escapeHtml(row.sku)}</td>
-        <td>${escapeHtml(row.qty)}</td>
-        <td>${escapeHtml(row.so_count)}</td>
-      `;
-      tbody.appendChild(tr);
-    }
+    pulledDemandSummary = state.summary.map((row) => ({ ...row, allocated: null, on_hand: null }));
+    pulledDemandSort = { key: 'qty', dir: 'desc' };
+    renderPulledDemandTable();
     table.hidden = false;
     syncRow.hidden = state.summary.length === 0;
     document.getElementById('sync-sku-filter-hint').hidden = state.summary.length === 0;
     statusEl.textContent = `${state.orders} orders -> ${state.sku_count} SKUs -- pulled ${fmtDate(state.finished_at)}`;
+    loadCin7AvailabilityForPulledDemand(state.summary.map((row) => row.sku));
   } catch (err) {
     statusEl.textContent = '';
     setError(err.message);
   } finally {
     btn.disabled = false;
+  }
+}
+
+function renderPulledDemandTable() {
+  const tbody = document.getElementById('pulled-demand-tbody');
+  const { key, dir } = pulledDemandSort;
+  const mult = dir === 'asc' ? 1 : -1;
+  const sorted = [...pulledDemandSummary].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;  // nulls (not-yet-fetched allocated/on_hand) sort last regardless of direction
+    if (bv == null) return -1;
+    if (typeof av === 'string') return av.localeCompare(bv) * mult;
+    return (av - bv) * mult;
+  });
+
+  tbody.innerHTML = '';
+  for (const row of sorted) {
+    const tr = document.createElement('tr');
+    tr.dataset.sku = row.sku;
+    tr.innerHTML = `
+      <td>${escapeHtml(row.sku)}</td>
+      <td>${escapeHtml(row.qty)}</td>
+      <td class="pd-allocated">${row.allocated == null ? '…' : escapeHtml(row.allocated)}</td>
+      <td class="pd-onhand">${row.on_hand == null ? '…' : escapeHtml(row.on_hand)}</td>
+      <td>${escapeHtml(row.so_count)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  for (const th of document.querySelectorAll('#pulled-demand-table th[data-sort]')) {
+    th.classList.toggle('sort-asc', th.dataset.sort === key && dir === 'asc');
+    th.classList.toggle('sort-desc', th.dataset.sort === key && dir === 'desc');
+  }
+}
+
+// Cin7's own Allocated/on-hand, read live and separately from the pull
+// itself (a real Cin7 call per SKU, see refresh-service/cin7_read.py's
+// get_availability_for_skus) -- kept out of the pull's own critical path
+// the same way loadCin7OnHandForTargets is kept separate from loading
+// the Targets table. A SKU Cin7 couldn't resolve, or the whole call
+// failing, leaves "…" rather than blocking the rest of the review table.
+async function loadCin7AvailabilityForPulledDemand(skus) {
+  const uniqueSkus = [...new Set(skus)];
+  if (!uniqueSkus.length) return;
+  try {
+    const { availability } = await api(`/production/cin7-availability?skus=${encodeURIComponent(uniqueSkus.join(','))}`);
+    for (const row of pulledDemandSummary) {
+      const a = availability[row.sku];
+      row.allocated = a ? a.allocated : null;
+      row.on_hand = a ? a.on_hand : null;
+    }
+    renderPulledDemandTable();
+  } catch (err) {
+    // Leave "…" showing -- same best-effort shape as loadCin7OnHandForTargets.
   }
 }
 
@@ -403,9 +460,7 @@ async function syncPulledDemand() {
   await applyTargetSync(demandBySku, {
     onDone: () => {
       for (const sku of syncedSkus) delete pulledDemandBySku[sku];
-      for (const tr of document.querySelectorAll('#pulled-demand-tbody tr')) {
-        if (syncedSkus.includes(tr.firstElementChild.textContent)) tr.remove();
-      }
+      pulledDemandSummary = pulledDemandSummary.filter((row) => !syncedSkus.includes(row.sku));
       const remaining = Object.keys(pulledDemandBySku).length;
       if (remaining === 0) {
         document.getElementById('pulled-demand-table').hidden = true;
@@ -413,6 +468,8 @@ async function syncPulledDemand() {
         document.getElementById('sync-sku-filter-hint').hidden = true;
         document.getElementById('pull-demand-status').textContent = '';
         pulledDemandBySku = null;
+      } else {
+        renderPulledDemandTable();
       }
       filterInput.value = '';
       if (notFound.length > 0) {
@@ -846,6 +903,15 @@ document.getElementById('refresh-putaway-btn').addEventListener('click', loadPut
 document.getElementById('open-orders-btn').addEventListener('click', downloadOpenOrders);
 document.getElementById('pull-demand-btn').addEventListener('click', pullDemandFromCin7);
 document.getElementById('sync-pulled-demand-btn').addEventListener('click', syncPulledDemand);
+for (const th of document.querySelectorAll('#pulled-demand-table th[data-sort]')) {
+  th.addEventListener('click', () => {
+    const key = th.dataset.sort;
+    pulledDemandSort = pulledDemandSort.key === key
+      ? { key, dir: pulledDemandSort.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'desc' };
+    renderPulledDemandTable();
+  });
+}
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
 document.getElementById('add-location-btn').addEventListener('click', addLocation);

@@ -289,6 +289,34 @@ class Cin7Client:
                 result[sku] = 0.0  # no Cin7 record for this SKU -- treat as no stock, not an error
         return result
 
+    def get_availability_detail(self, skus: list[str]) -> dict[str, dict]:
+        """SKU -> {"on_hand", "allocated", "available"}, each SUMMED
+        ACROSS EVERY BIN -- same endpoint/rows as get_availability, but
+        surfacing OnHand and Allocated individually rather than only the
+        netted Available figure. Added for the admin page's pulled-demand
+        review table (2026-10-01): Cin7's own Allocated is a materially
+        different number from this app's own "qty backordered" (computed
+        from order/invoice STATUS) -- an order that's been invoiced but
+        not yet shipped still shows as Allocated (and its stock still
+        shows in OnHand) in Cin7, so Allocated is the figure to actually
+        trust for "what does Cin7 think is still committed," independent
+        of this app's own status-filter heuristic. A SKU Cin7 has no
+        record for comes back all zeros, same "no record yet" convention
+        as get_availability/get_stock_on_hand.
+        """
+        result = {}
+        for sku in skus:
+            try:
+                rows = self._get_availability_rows(sku)
+                result[sku] = {
+                    "on_hand": sum(row["OnHand"] for row in rows),
+                    "allocated": sum(row["Allocated"] for row in rows),
+                    "available": sum(row["Available"] for row in rows),
+                }
+            except ValueError:
+                result[sku] = {"on_hand": 0.0, "allocated": 0.0, "available": 0.0}
+        return result
+
     def get_open_assemblies(self, skus: list[str]) -> dict[str, float]:
         """SKU -> total qty across assemblies not yet COMPLETED or VOIDED
         (Cin7 doesn't document a single "open" status, so this fetches

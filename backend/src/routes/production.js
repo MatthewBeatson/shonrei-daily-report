@@ -237,8 +237,7 @@ router.get('/targets', requireProductionAuth, asyncHandler(async (req, res) => {
   res.json({ targets: rows });
 }));
 
-// Real Cin7 on-hand for a batch of SKUs -- the one place this whole app
-// currently reads real Cin7 data (see refresh-service/cin7_read.py).
+// Real Cin7 on-hand for a batch of SKUs (see refresh-service/cin7_read.py).
 // Read-only, can't affect anything in Cin7. Separate call from GET
 // /targets itself so the targets table still loads even if this one
 // times out waiting on Cin7 for a lot of SKUs.
@@ -246,6 +245,19 @@ router.get('/targets/cin7-on-hand', requireProductionAuth, asyncHandler(async (r
   const skus = req.query.skus;
   if (!skus) throw new ApiError(400, 'skus query param is required (comma-separated)');
   const data = await callRefreshService(`/cin7/on-hand?skus=${encodeURIComponent(skus)}`, {}, 'GET');
+  res.json(data);
+}));
+
+// Real Cin7 on-hand/allocated/available for a batch of SKUs -- richer
+// than the above (which is just on-hand): Allocated is Cin7's own
+// "committed to an order" figure, distinct from this app's own "qty
+// backordered" (computed from order/invoice status) -- see
+// Cin7Client.get_availability_detail's docstring. Feeds the pulled-
+// demand review table.
+router.get('/cin7-availability', requireProductionAuth, asyncHandler(async (req, res) => {
+  const skus = req.query.skus;
+  if (!skus) throw new ApiError(400, 'skus query param is required (comma-separated)');
+  const data = await callRefreshService(`/cin7/availability?skus=${encodeURIComponent(skus)}`, {}, 'GET');
   res.json(data);
 }));
 

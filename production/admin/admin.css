@@ -43,6 +43,20 @@
 .overrides-table td.narrow { width: 1%; white-space: nowrap; }
 .overrides-table tr.closed-row { opacity: 0.6; }
 
+.sortable-table th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable-table th[data-sort]:hover { color: var(--navy, #17365D); }
+.sortable-table th[data-sort]::after {
+  content: '';
+  display: inline-block;
+  width: 0.8em;
+}
+.sortable-table th[data-sort].sort-asc::after { content: ' \25B2'; }
+.sortable-table th[data-sort].sort-desc::after { content: ' \25BC'; }
+
 .status-pill {
   display: inline-block;
   padding: 2px 8px;
