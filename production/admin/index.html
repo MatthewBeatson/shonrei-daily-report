@@ -100,18 +100,22 @@
           <span class="sub" id="pull-demand-status"></span>
         </div>
         <p class="sub">
-          Cin7 Allocated/on-hand (separate columns, read live from Cin7's own
-          product availability -- not computed by this app) can differ from
-          "Qty backordered" here: an order that's been invoiced but not yet
-          shipped still shows as Allocated (and its stock still shows in
-          Cin7's on-hand) even though this app's own qty-backordered figure
-          has already dropped it. Click a column heading to sort by it.
+          "Total on order" is this app's own figure (same logic as Total
+          Product on Order above) -- what's still on order, EXCLUDING
+          anything already invoiced even if Cin7 hasn't physically shipped
+          it yet. This is what Sync targets below actually works from. Cin7
+          Allocated/on-hand (read live from Cin7's own product availability,
+          not computed by this app) can run higher: Cin7 doesn't care about
+          invoice status, so an order invoiced but not yet shipped still
+          shows as Allocated (and its stock still shows in Cin7's on-hand)
+          even after Total on order has already dropped it. Click a column
+          heading to sort by it.
         </p>
         <table class="overrides-table sortable-table" id="pulled-demand-table" hidden>
           <thead>
             <tr>
               <th data-sort="sku">SKU</th>
-              <th data-sort="qty">Qty backordered</th>
+              <th data-sort="qty">Total on order</th>
               <th data-sort="allocated">Cin7 Allocated</th>
               <th data-sort="on_hand">Cin7 on-hand</th>
               <th data-sort="so_count">Open SO lines</th>
