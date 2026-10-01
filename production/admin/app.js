@@ -130,6 +130,40 @@ async function downloadLabel(path, suggestedFilename) {
   }
 }
 
+// -- Total Product on Order --------------------------------------------
+// Start a background build on the refresh service, poll until it's done,
+// then download the .xlsx (see refresh-service/open_orders_xlsx.py).
+
+async function downloadOpenOrders() {
+  const btn = document.getElementById('open-orders-btn');
+  const statusEl = document.getElementById('open-orders-status');
+  btn.disabled = true;
+  setError('');
+  statusEl.textContent = 'Starting...';
+  try {
+    let state = await api('/production/open-orders/start', { method: 'POST', body: '{}' });
+    const startedAt = Date.now();
+    while (state.status === 'running') {
+      statusEl.textContent = state.total
+        ? `Reading Cin7 orders... ${state.done} of ${state.total}`
+        : 'Listing open orders in Cin7...';
+      if (Date.now() - startedAt > 15 * 60 * 1000) throw new Error('Still building after 15 minutes -- try again shortly.');
+      await new Promise((r) => setTimeout(r, 3000));
+      state = await api('/production/open-orders/status');
+    }
+    if (state.status !== 'done') throw new Error(state.error || 'The download failed -- try again.');
+    statusEl.textContent = 'Downloading...';
+    await downloadLabel('/production/open-orders/download', state.filename || 'Total_product_on_order.xlsx');
+    statusEl.textContent = `${state.orders} orders, ${state.lines} lines, ${Number(state.units).toLocaleString('en-NZ')} units`
+      + ` -- pulled ${fmtDate(state.finished_at)}`;
+  } catch (err) {
+    statusEl.textContent = '';
+    setError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // -- Targets -----------------------------------------------------------
 
 async function loadTargets() {
@@ -687,6 +721,7 @@ document.getElementById('sync-stocktake-btn').addEventListener('click', syncStoc
 document.getElementById('refresh-locations-btn').addEventListener('click', loadLocations);
 document.getElementById('locations-filter').addEventListener('change', loadLocations);
 document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
+document.getElementById('open-orders-btn').addEventListener('click', downloadOpenOrders);
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
 document.getElementById('add-location-btn').addEventListener('click', addLocation);
