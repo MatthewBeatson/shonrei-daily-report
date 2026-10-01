@@ -82,9 +82,28 @@ def sync_targets(conn, cin7, demand_lines_by_sku: dict[str, list[dict]]) -> list
                 (target_id,) = cur.fetchone()
         elif action.kind == 'adjust':
             with conn.cursor() as cur:
-                cur.execute("select cin7_assembly_id from production.targets where id = %s", (action.target_id,))
-                (assembly_id,) = cur.fetchone()
-            cin7.adjust_assembly_qty(assembly_id, action.new_outstanding_qty)
+                cur.execute("select sku, cin7_assembly_id from production.targets where id = %s", (action.target_id,))
+                (sku, assembly_id) = cur.fetchone()
+            try:
+                cin7.adjust_assembly_qty(assembly_id, action.new_outstanding_qty)
+            except Exception as exc:  # noqa: BLE001
+                # adjust_assembly_qty's PUT is the one Cin7 write this
+                # codebase has never independently confirmed to succeed
+                # (see cin7_client.py's docstring) -- the documented
+                # fallback is close the old assembly and create a fresh
+                # one at the new quantity, which both ARE confirmed live.
+                # Keeps target sync usable against real Cin7 even if the
+                # in-place adjust call itself turns out not to work.
+                print(f'sync_targets: adjust_assembly_qty failed for {sku!r} ({exc}) -- '
+                      'falling back to close + recreate', flush=True)
+                cin7.close_assembly(assembly_id)
+                assembly = cin7.create_authorised_assembly(sku, action.new_outstanding_qty)
+                assembly_id = assembly.assembly_id
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "update production.targets set cin7_assembly_id = %s where id = %s",
+                        (assembly_id, action.target_id),
+                    )
             with conn.cursor() as cur:
                 cur.execute(
                     "update production.targets set outstanding_qty = %s where id = %s",

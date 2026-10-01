@@ -37,7 +37,7 @@ from warehouse import (
     WarehouseError, record_putaway_scan, set_home_location,
     get_putaway_mismatch_mode, set_putaway_mismatch_mode,
 )
-from cin7_read import get_on_hand_for_skus, sku_exists
+from cin7_read import get_on_hand_for_skus, sku_exists, get_real_cin7_client
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 import open_orders_xlsx
 
@@ -234,8 +234,14 @@ def production_targets_sync():
     Demand extraction from live Cin7 SOs isn't wired in yet (see
     backorder_targets.extract_demand_lines) -- for now the caller supplies
     it directly, same "live concept, Cin7 reads deferred" approach as
-    /production/plan. Runs against DryRunCin7Client so no real Cin7
-    assembly is touched (see dry_run_cin7.py).
+    /production/plan.
+
+    Runs against the REAL Cin7Client (switched over 2026-10-01) -- create
+    and close are both confirmed live; adjust (an existing target's
+    quantity changing) falls back to close+recreate inside sync_targets
+    if the in-place adjust call itself fails, since that one specific
+    call was never independently confirmed to succeed. This really does
+    create/adjust/close a real Cin7 assembly.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -245,7 +251,7 @@ def production_targets_sync():
 
     conn = get_conn()
     try:
-        results = sync_targets(conn, DryRunCin7Client(conn), demand_lines_by_sku)
+        results = sync_targets(conn, get_real_cin7_client(), demand_lines_by_sku)
     finally:
         conn.close()
 
@@ -284,10 +290,13 @@ def production_plan_batches(target_id):
 def production_batch_actual(batch_id):
     """Body: {"actual_qty", "reject_qty", "reported_via", "reported_by",
     "labour_hours_overrides", "pick_line_overrides"}. The floor-input
-    endpoint's backend: completes a real (today: dry-run) small Cin7
-    assembly and decrements the parent target. Called by the Node
-    backend's POST /production/batch-actuals, not directly by the floor
-    app -- see backend/src/routes/production.js.
+    endpoint's backend: completes a REAL small Cin7 assembly (switched
+    over 2026-10-01 -- this is the most-proven Cin7 write in the whole
+    app, a full Create->Authorise->Complete run succeeded live against a
+    real test assembly) and decrements the parent target. This genuinely
+    consumes real component stock and produces real finished-goods stock
+    in Cin7. Called by the Node backend's POST /production/batch-actuals,
+    not directly by the floor app -- see backend/src/routes/production.js.
 
     labour_hours_overrides/pick_line_overrides are optional, for a
     future floor-app quick-add UI (see cin7_client.complete_small_
@@ -305,7 +314,7 @@ def production_batch_actual(batch_id):
     try:
         try:
             result = apply_batch_actual(
-                conn, DryRunCin7Client(conn), batch_id,
+                conn, get_real_cin7_client(), batch_id,
                 actual_qty, payload.get('reject_qty') or 0,
                 payload.get('reported_via') or 'manual', payload.get('reported_by'),
                 labour_hours_overrides=payload.get('labour_hours_overrides'),
@@ -323,8 +332,10 @@ def production_batch_actual(batch_id):
 @app.post('/stocktake/counts')
 def stocktake_record_count():
     """Body: {"sku", "counted_qty", "location", "reported_via", "reported_by"}.
-    Runs against DryRunCin7Client (see dry_run_cin7.py) -- recording a
-    count never touches live Cin7 on its own, see stocktake.py.
+    Recording a count never writes to Cin7 on its own, see stocktake.py --
+    the only Cin7 call this makes is the on-hand snapshot for the
+    variance shown back, a pure read, so this runs against the REAL
+    Cin7Client (switched over 2026-10-01, zero write risk either way).
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -339,7 +350,7 @@ def stocktake_record_count():
     try:
         try:
             result = record_count(
-                conn, DryRunCin7Client(conn), sku, counted_qty,
+                conn, get_real_cin7_client(), sku, counted_qty,
                 location=payload.get('location'),
                 reported_via=payload.get('reported_via') or 'manual',
                 reported_by=payload.get('reported_by'),
@@ -355,8 +366,10 @@ def stocktake_record_count():
 
 @app.post('/stocktake/counts/<count_id>/adjust')
 def stocktake_apply_adjustment(count_id):
-    """Pushes one already-recorded count to Cin7 as a stock adjustment --
-    a deliberate, separate step from recording it, see stocktake.py.
+    """Pushes one already-recorded count to Cin7 as a REAL stock
+    adjustment (switched over 2026-10-01 -- adjust_stock_on_hand,
+    including bin-tagging, is confirmed live) -- a deliberate, separate
+    step from recording it, see stocktake.py.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
@@ -365,7 +378,7 @@ def stocktake_apply_adjustment(count_id):
     conn = get_conn()
     try:
         try:
-            result = apply_adjustment(conn, DryRunCin7Client(conn), count_id, payload.get('note'))
+            result = apply_adjustment(conn, get_real_cin7_client(), count_id, payload.get('note'))
         except StocktakeError as exc:
             conn.rollback()
             return jsonify({'error': str(exc)}), 409
@@ -416,13 +429,21 @@ def stocktake_sync():
     has no Cin7 Bin linked yet comes back `skipped: True` rather than
     erroring the whole sync. Safe to call repeatedly through a stocktake
     cycle. See stocktake.sync_stocktake_totals.
+
+    Runs against the REAL Cin7Client (switched over 2026-10-01) -- the
+    bin-tagged adjustment itself is confirmed live; tagging it with a
+    StocktakeNumber specifically has not been independently live-tested,
+    so the first real formal-stocktake sync is worth watching closely --
+    a failure there surfaces as a normal per-count error, it can't
+    corrupt anything (a count only flips to 'adjusted' after Cin7's own
+    adjustment call succeeds and returns a real TaskID).
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401
     conn = get_conn()
     try:
         try:
-            results = sync_stocktake_totals(conn, DryRunCin7Client(conn))
+            results = sync_stocktake_totals(conn, get_real_cin7_client())
         except StocktakeError as exc:
             conn.rollback()
             return jsonify({'error': str(exc)}), 409
@@ -498,8 +519,15 @@ def warehouse_set_home_location(sku):
     """Body: {"location_code"}. Assigns (or reassigns) a SKU's home
     location -- what a putaway scan is checked against -- and also
     pushes it as Cin7's own product DefaultLocation (best-effort, see
-    warehouse.set_home_location's docstring; dry-run today, same as
-    every other Cin7 write on this service).
+    warehouse.set_home_location's docstring). The ONE remaining dry-run
+    Cin7 call left on this service (2026-10-01, every other write
+    switched to real) -- not a caution, there's simply no real
+    implementation to switch to yet: Cin7Client.update_product_default_
+    location deliberately raises NotImplementedError until its real
+    request shape is confirmed live (scripts/probe_product_default_
+    location_write.py). The local DB assignment and label printing both
+    work fully regardless -- this only affects whether Cin7's own
+    product record shows the location too.
     """
     if not require_secret():
         return jsonify({'error': 'unauthorized'}), 401

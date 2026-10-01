@@ -217,25 +217,42 @@ network hiccup, not "genuinely doesn't exist") is never folded into
 NOT apply to admin's own "Add location" toolbar, which is the deliberate
 way a real location gets set up in the first place.
 
-**What's dry-run vs. real today:** the DB side (targets, demand lines,
-batches, actuals, the clamp-at-zero/close-at-zero math) is fully real --
-see the local end-to-end run below. Every Cin7 call
-(`create_authorised_assembly`, `adjust_assembly_qty`, `close_assembly`,
-`complete_small_assembly`) currently goes through
-`refresh-service/dry_run_cin7.py` instead of live Cin7 -- it logs
-exactly what it would have done (also written to
-`production.cin7_dry_run_log` for inspection) and returns a fake
-assembly ID, so the whole chain -- sync demand, create a target, split
-it into batches, report an actual, watch the target close -- is provable
-end to end with zero risk to live inventory. `cin7_client.py`'s real
-implementations of these methods are now wired from Cin7's own
-documented Finished Goods / Stock Adjustment endpoint shapes (see its
-module docstring), but not yet proven against a live tenant --
-`scripts/dump_sample_assembly_write.py` is the write-side counterpart to
-`dump_sample_bom.py`, run once against a real throwaway assembly to
-confirm before switching `DryRunCin7Client()` for a real `Cin7Client()`
-here. `backorder_targets.py` and `batch_staging.py` don't care which
-implementation they're given.
+**What's dry-run vs. real today (switched over 2026-10-01):** every Cin7
+write this app makes now runs against the real `Cin7Client`, EXCEPT one:
+
+  - `set_home_location`'s push of a SKU's home location to Cin7's
+    product `DefaultLocation` field stays on `DryRunCin7Client` --
+    there's no real implementation to switch to yet, since
+    `Cin7Client.update_product_default_location` deliberately raises
+    `NotImplementedError` until `scripts/probe_product_default_
+    location_write.py` confirms the real request shape live. The local
+    DB assignment and label printing both work fully regardless; this
+    only affects whether Cin7's own product record shows the location
+    too.
+
+Everything else -- `create_authorised_assembly`/`close_assembly`
+(confirmed live), `complete_small_assembly` (the most-proven write in
+this app -- a full Create->Authorise->Complete run succeeded live
+against a real test assembly), `adjust_stock_on_hand` (confirmed live,
+including bin-tagging) -- genuinely writes to live Cin7 now: a reported
+batch actual really completes a real assembly and consumes real
+component stock, a pushed stocktake count really adjusts real on-hand.
+
+One call was never independently confirmed to succeed on its own:
+`adjust_assembly_qty` (an existing backorder target's quantity changing
+in place). Rather than wait on that confirmation, `backorder_targets.
+sync_targets`'s `adjust` branch now catches a failure there and falls
+back to `close_assembly` + `create_authorised_assembly` at the new
+quantity -- both of those ARE confirmed live -- so target sync is safe
+to run against real Cin7 either way. A formal stocktake sync's
+`StocktakeNumber` tagging is similarly unconfirmed in isolation, but a
+failure there just surfaces as a normal per-count error (a count only
+flips to `'adjusted'` after Cin7's own call succeeds and returns a real
+TaskID), it can't corrupt anything.
+
+`backorder_targets.py` and `batch_staging.py` don't care which Cin7
+client implementation they're given -- same drop-in design as always,
+see `dry_run_cin7.py`'s module docstring.
 
 **Not yet wired:** `backorder_targets.extract_demand_lines()` -- turning
 a Cin7 sale's full detail into per-SKU backordered quantities -- is a
@@ -970,9 +987,8 @@ Create -> Authorise -> Complete (with a confirmation prompt before each
 write); stock adjustment and the Void/cancel test are deliberately not
 in it this round (voiding is being done manually in Cin7's UI instead).
 Now that Create -> Authorise -> Complete has succeeded live, the
-remaining step is re-running it with the labour-line fix included, then
-swapping `DryRunCin7Client` for a real `Cin7Client` in the
-backorder-target/batch flow -- see "What's dry-run vs. real today" above.
+backorder-target/batch flow has been switched over to the real
+`Cin7Client` -- see "What's dry-run vs. real today" above.
 
 **All three earlier batch-completion UI ideas are now wired into
 `cin7_client.py`/`backorder_targets.py`/the Node route -- only the
