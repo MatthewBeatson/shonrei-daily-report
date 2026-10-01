@@ -250,6 +250,78 @@ async function planBatches(targetId, sku, runSizeStr) {
 
 // -- Sync demand ---------------------------------------------------------
 
+// Pulled-from-Cin7 demand, kept in memory between the pull finishing and
+// "Sync targets from this pull" being clicked -- same shape
+// POST /production/targets/sync wants, built server-side (see
+// refresh-service/demand_sync.py), nothing to re-derive here.
+let pulledDemandBySku = null;
+
+async function applyTargetSync(demandBySku, { onDone } = {}) {
+  const resultEl = document.getElementById('sync-result');
+  setError('');
+  try {
+    const data = await api('/production/targets/sync', {
+      method: 'POST',
+      body: JSON.stringify({ demand_lines_by_sku: demandBySku }),
+    });
+    resultEl.hidden = false;
+    resultEl.textContent = JSON.stringify(data.actions, null, 2);
+    setSuccess(`Sync applied ${data.actions.length} target action(s).`);
+    await loadTargets();
+    onDone?.();
+  } catch (err) {
+    setError(err.message);
+  }
+}
+
+// Same background-job-with-status-polling shape as downloadOpenOrders
+// above (minutes on a cold cache, see refresh-service/demand_sync.py).
+async function pullDemandFromCin7() {
+  const btn = document.getElementById('pull-demand-btn');
+  const statusEl = document.getElementById('pull-demand-status');
+  const table = document.getElementById('pulled-demand-table');
+  const tbody = document.getElementById('pulled-demand-tbody');
+  const syncRow = document.getElementById('pulled-demand-sync-row');
+  btn.disabled = true;
+  setError('');
+  table.hidden = true;
+  syncRow.hidden = true;
+  statusEl.textContent = 'Starting...';
+  try {
+    let state = await api('/production/demand/pull', { method: 'POST', body: '{}' });
+    const startedAt = Date.now();
+    while (state.status === 'running') {
+      statusEl.textContent = state.total
+        ? `Reading Cin7 orders... ${state.done} of ${state.total}`
+        : 'Listing open orders in Cin7...';
+      if (Date.now() - startedAt > 15 * 60 * 1000) throw new Error('Still pulling after 15 minutes -- try again shortly.');
+      await new Promise((r) => setTimeout(r, 3000));
+      state = await api('/production/demand/status');
+    }
+    if (state.status !== 'done') throw new Error(state.error || 'The pull failed -- try again.');
+
+    pulledDemandBySku = state.demand_lines_by_sku;
+    tbody.innerHTML = '';
+    for (const row of state.summary) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${escapeHtml(row.sku)}</td>
+        <td>${escapeHtml(row.qty)}</td>
+        <td>${escapeHtml(row.so_count)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+    table.hidden = false;
+    syncRow.hidden = state.summary.length === 0;
+    statusEl.textContent = `${state.orders} orders -> ${state.sku_count} SKUs -- pulled ${fmtDate(state.finished_at)}`;
+  } catch (err) {
+    statusEl.textContent = '';
+    setError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function addDemandRow(values = {}) {
   const tbody = document.getElementById('demand-tbody');
   const tr = document.createElement('tr');
@@ -280,24 +352,26 @@ function collectDemandRows() {
 
 async function syncDemand() {
   const demandBySku = collectDemandRows();
-  const resultEl = document.getElementById('sync-result');
   if (Object.keys(demandBySku).length === 0) {
     setError('Add at least one complete row (SKU, SO number, quantity) before syncing.');
     return;
   }
-  setError('');
-  try {
-    const data = await api('/production/targets/sync', {
-      method: 'POST',
-      body: JSON.stringify({ demand_lines_by_sku: demandBySku }),
-    });
-    resultEl.hidden = false;
-    resultEl.textContent = JSON.stringify(data.actions, null, 2);
-    setSuccess(`Sync applied ${data.actions.length} target action(s).`);
-    await loadTargets();
-  } catch (err) {
-    setError(err.message);
+  await applyTargetSync(demandBySku);
+}
+
+async function syncPulledDemand() {
+  if (!pulledDemandBySku || Object.keys(pulledDemandBySku).length === 0) {
+    setError('Pull from Cin7 first.');
+    return;
   }
+  await applyTargetSync(pulledDemandBySku, {
+    onDone: () => {
+      document.getElementById('pulled-demand-table').hidden = true;
+      document.getElementById('pulled-demand-sync-row').hidden = true;
+      document.getElementById('pull-demand-status').textContent = '';
+      pulledDemandBySku = null;
+    },
+  });
 }
 
 // -- Batches -------------------------------------------------------------
@@ -722,6 +796,8 @@ document.getElementById('refresh-locations-btn').addEventListener('click', loadL
 document.getElementById('locations-filter').addEventListener('change', loadLocations);
 document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
 document.getElementById('open-orders-btn').addEventListener('click', downloadOpenOrders);
+document.getElementById('pull-demand-btn').addEventListener('click', pullDemandFromCin7);
+document.getElementById('sync-pulled-demand-btn').addEventListener('click', syncPulledDemand);
 document.getElementById('add-demand-row-btn').addEventListener('click', () => addDemandRow());
 document.getElementById('sync-demand-btn').addEventListener('click', syncDemand);
 document.getElementById('add-location-btn').addEventListener('click', addLocation);

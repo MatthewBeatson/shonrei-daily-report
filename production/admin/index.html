@@ -85,12 +85,33 @@
       <div class="section-header">SYNC BACKORDER DEMAND</div>
       <div class="section-body">
         <p class="sub">
-          One row per backordered SO line. Rows are grouped by SKU and summed
-          before syncing -- a SKU's target is created, adjusted, or closed to
-          match the new total (see production/README.md for the exact rules).
-          Real Cin7 SO-line extraction isn't wired in yet, so this is entered
-          by hand for now.
+          A target is created, adjusted, or closed per SKU to match its
+          total backordered quantity across every open SO (see
+          production/README.md for the exact rules). This really does
+          create/adjust/close a real Cin7 assembly once synced.
         </p>
+
+        <p class="sub"><strong>Pull from Cin7</strong> -- same open-order
+          selection as "Total Product on Order" above (AUTHORISED, not yet
+          invoiced). Takes a couple of minutes the first time; review the
+          per-SKU totals before syncing.</p>
+        <div class="admin-toolbar">
+          <button class="btn-primary" id="pull-demand-btn">Pull from Cin7</button>
+          <span class="sub" id="pull-demand-status"></span>
+        </div>
+        <table class="overrides-table" id="pulled-demand-table" hidden>
+          <thead>
+            <tr><th>SKU</th><th>Qty backordered</th><th>Open SO lines</th></tr>
+          </thead>
+          <tbody id="pulled-demand-tbody"></tbody>
+        </table>
+        <div class="admin-toolbar" id="pulled-demand-sync-row" hidden>
+          <button class="btn-primary" id="sync-pulled-demand-btn">Sync targets from this pull</button>
+        </div>
+
+        <p class="sub" style="margin-top:16px;"><strong>Or enter by hand</strong>
+          -- one row per backordered SO line, for a correction or a SKU the
+          Cin7 pull above missed.</p>
         <table class="overrides-table" id="demand-table">
           <thead>
             <tr><th>SKU</th><th>SO number</th><th>Order date</th><th>Qty backordered</th><th></th></tr>

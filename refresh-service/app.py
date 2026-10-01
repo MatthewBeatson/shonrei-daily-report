@@ -40,6 +40,7 @@ from warehouse import (
 from cin7_read import get_on_hand_for_skus, sku_exists, get_real_cin7_client
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 import open_orders_xlsx
+import demand_sync
 
 app = Flask(__name__)
 
@@ -231,10 +232,10 @@ def production_plan():
 @app.post('/production/targets/sync')
 def production_targets_sync():
     """Body: {"demand_lines_by_sku": {sku: [{"so_number","order_date","qty_backordered"}, ...]}}.
-    Demand extraction from live Cin7 SOs isn't wired in yet (see
-    backorder_targets.extract_demand_lines) -- for now the caller supplies
-    it directly, same "live concept, Cin7 reads deferred" approach as
-    /production/plan.
+    Caller supplies the demand lines directly -- either typed by hand on
+    the admin page, or (since 2026-10-01) pulled straight from live Cin7
+    via POST /production/demand/pull + GET /production/demand/status
+    below (see demand_sync.py). This route itself doesn't care which.
 
     Runs against the REAL Cin7Client (switched over 2026-10-01) -- create
     and close are both confirmed live; adjust (an existing target's
@@ -256,6 +257,37 @@ def production_targets_sync():
         conn.close()
 
     return jsonify({'actions': results}), 200
+
+
+# -- Pull backorder demand from live Cin7 (production admin) ----------
+# Real Cin7, READ ONLY -- same carve-out as /cin7/on-hand and Total
+# Product on Order. Same background-job-with-status-polling shape as
+# /reports/open-orders/* (minutes on a cold cache, shares its per-sale
+# cache too) -- see demand_sync.py.
+
+@app.post('/production/demand/pull')
+def production_demand_pull():
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    return jsonify(demand_sync.start_pull()), 202
+
+
+@app.get('/production/demand/status')
+def production_demand_status():
+    """Once status is 'done', also carries `summary` (one row per SKU:
+    sku, qty, so_count) for the admin page to show before syncing, and
+    `demand_lines_by_sku` in the exact shape POST /production/targets/
+    sync wants -- the admin page's "Sync targets" button sends this
+    straight back rather than re-deriving it.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    state = demand_sync.job_state()
+    if state['status'] == 'done':
+        demand_lines_by_sku, summary = demand_sync.get_result()
+        state['summary'] = summary
+        state['demand_lines_by_sku'] = demand_lines_by_sku
+    return jsonify(state), 200
 
 
 @app.post('/production/targets/<target_id>/plan-batches')

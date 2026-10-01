@@ -254,14 +254,19 @@ TaskID), it can't corrupt anything.
 client implementation they're given -- same drop-in design as always,
 see `dry_run_cin7.py`'s module docstring.
 
-**Not yet wired:** `backorder_targets.extract_demand_lines()` -- turning
-a Cin7 sale's full detail into per-SKU backordered quantities -- is a
-hard `NotImplementedError` on purpose. `dispatch_plan_data.py` already
-confirms order-level fields (OrderNumber, OrderDate, Customer, ShipBy),
-but the per-line SKU/backorder-qty shape hasn't been confirmed against a
-live sale detail yet. Until then, `POST /production/targets/sync` takes
-`demand_lines_by_sku` directly on the request body (see the worked
-example below) rather than pulling it from Cin7 automatically.
+**Demand extraction (2026-10-01):** admin's "Sync backorder demand" can
+now pull straight from live Cin7 instead of typing rows by hand -- a
+"Pull from Cin7" button (`refresh-service/demand_sync.py`, same
+background-job-with-status-polling shape as "Total Product on Order",
+and sharing its per-sale cache) reads every open SO line (same
+AUTHORISED-not-invoiced selection as "Sales on hand"), groups it by SKU
+for review, and hands the result straight to `POST /production/targets/
+sync` when the admin clicks "Sync targets from this pull". Manual entry
+(the original table) is still there for a correction or a SKU the pull
+missed -- both paths end up calling the same `sync_targets`.
+`backorder_targets.extract_demand_lines()` itself (written for a single
+sale's detail, a narrower shape) is superseded by this rather than
+filled in -- still a hard `NotImplementedError`, nothing calls it.
 
 **Verified locally, real HTTP, real Postgres:** ran both migrations,
 booted refresh-service + the Node backend together, and drove the whole
@@ -1033,11 +1038,6 @@ before it reaches `complete_small_assembly`.
 
 ## Still not built
 
-- **SO backorder extraction**
-  (`backorder_targets.extract_demand_lines`) -- turning a Cin7 sale's
-  full detail into per-SKU backordered quantities, needs its own
-  confirm-first pass against a live sale detail (see
-  `backorder_targets.py`'s module docstring).
 - **QR-scan-to-select on the general-path floor screen** -- Batches and
   Stocktake both already have barcode/manual entry; the general
   BOM-explosion path (`production_runs`) has no floor-app screen of its

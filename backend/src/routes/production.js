@@ -288,11 +288,25 @@ router.get('/batches', requireProductionAuth, asyncHandler(async (req, res) => {
 }));
 
 // Body: {"demand_lines_by_sku": {sku: [{so_number, order_date, qty_backordered}, ...]}}
-// See refresh-service/backorder_targets.py -- demand extraction from live
-// Cin7 SOs isn't wired in yet, so this is supplied directly for now.
+// Typed by hand, or (since 2026-10-01) pulled from live Cin7 via the two
+// routes below and sent back as-is.
 router.post('/targets/sync', requireProductionEdit, asyncHandler(async (req, res) => {
   const data = await callRefreshService('/production/targets/sync', req.body);
   res.status(200).json(data);
+}));
+
+// Pulls backorder demand straight from live Cin7 open sales orders --
+// same background-job-with-status-polling shape as /open-orders/* above
+// (minutes on a cold cache, see refresh-service/demand_sync.py). Status
+// carries `summary` (one row per SKU) once done, for review before
+// syncing, plus `demand_lines_by_sku` ready to send straight to
+// POST /targets/sync above.
+router.post('/demand/pull', requireProductionEdit, asyncHandler(async (req, res) => {
+  res.json(await callRefreshService('/production/demand/pull', {}));
+}));
+
+router.get('/demand/status', requireProductionAuth, asyncHandler(async (req, res) => {
+  res.json(await callRefreshService('/production/demand/status', null, 'GET'));
 }));
 
 router.post('/targets/:targetId/plan-batches', requireProductionEdit, asyncHandler(async (req, res) => {
