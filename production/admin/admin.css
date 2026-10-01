@@ -57,6 +57,8 @@
 .sortable-table th[data-sort].sort-asc::after { content: ' \25B2'; }
 .sortable-table th[data-sort].sort-desc::after { content: ' \25BC'; }
 
+.pd-gap-positive { color: var(--red); font-weight: 600; }
+
 .status-pill {
   display: inline-block;
   padding: 2px 8px;

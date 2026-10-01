@@ -108,8 +108,13 @@
           not computed by this app) can run higher: Cin7 doesn't care about
           invoice status, so an order invoiced but not yet shipped still
           shows as Allocated (and its stock still shows in Cin7's on-hand)
-          even after Total on order has already dropped it. Click a column
-          heading to sort by it.
+          even after Total on order has already dropped it. The right-most
+          column (red when above zero) is an ESTIMATE of that gap --
+          Allocated minus Total on order -- i.e. roughly how much is
+          invoiced but still needs physically shipping in Cin7; it's
+          arithmetic on the two figures already pulled, not its own
+          confirmed Cin7 field, so treat it as a lead to check in Cin7,
+          not a guaranteed-exact count. Click a column heading to sort by it.
         </p>
         <table class="overrides-table sortable-table" id="pulled-demand-table" hidden>
           <thead>
@@ -119,6 +124,7 @@
               <th data-sort="allocated">Cin7 Allocated</th>
               <th data-sort="on_hand">Cin7 on-hand</th>
               <th data-sort="so_count">Open SO lines</th>
+              <th data-sort="gap">Invoiced, not shipped (est.)</th>
             </tr>
           </thead>
           <tbody id="pulled-demand-tbody"></tbody>

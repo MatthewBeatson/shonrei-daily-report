@@ -309,7 +309,7 @@ async function pullDemandFromCin7() {
     if (state.status !== 'done') throw new Error(state.error || 'The pull failed -- try again.');
 
     pulledDemandBySku = state.demand_lines_by_sku;
-    pulledDemandSummary = state.summary.map((row) => ({ ...row, allocated: null, on_hand: null }));
+    pulledDemandSummary = state.summary.map((row) => ({ ...row, allocated: null, on_hand: null, gap: null }));
     pulledDemandSort = { key: 'qty', dir: 'desc' };
     renderPulledDemandTable();
     table.hidden = false;
@@ -342,12 +342,14 @@ function renderPulledDemandTable() {
   for (const row of sorted) {
     const tr = document.createElement('tr');
     tr.dataset.sku = row.sku;
+    const gapCell = row.gap == null ? '…' : `<span class="${row.gap > 0 ? 'pd-gap-positive' : ''}">${escapeHtml(row.gap)}</span>`;
     tr.innerHTML = `
       <td>${escapeHtml(row.sku)}</td>
       <td>${escapeHtml(row.qty)}</td>
       <td class="pd-allocated">${row.allocated == null ? '…' : escapeHtml(row.allocated)}</td>
       <td class="pd-onhand">${row.on_hand == null ? '…' : escapeHtml(row.on_hand)}</td>
       <td>${escapeHtml(row.so_count)}</td>
+      <td class="pd-gap">${gapCell}</td>
     `;
     tbody.appendChild(tr);
   }
@@ -373,6 +375,12 @@ async function loadCin7AvailabilityForPulledDemand(skus) {
       const a = availability[row.sku];
       row.allocated = a ? a.allocated : null;
       row.on_hand = a ? a.on_hand : null;
+      // Estimate only -- Allocated doesn't care about invoice status, so
+      // (Allocated - Total on order) is roughly "invoiced but still
+      // needs physically shipping in Cin7", per the explanatory text
+      // above the table. Not a dedicated Cin7 field; treat it as a lead
+      // to check in Cin7, not a guaranteed-exact count.
+      row.gap = row.allocated == null ? null : Math.max(0, row.allocated - row.qty);
     }
     renderPulledDemandTable();
   } catch (err) {
