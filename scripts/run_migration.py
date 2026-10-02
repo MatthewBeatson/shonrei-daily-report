@@ -22,6 +22,7 @@ def main():
     sql_path = Path(sys.argv[1])
     sql = sql_path.read_text(encoding='utf-8')
 
+    print('Connecting...', flush=True)
     conn = psycopg2.connect(
         host=os.environ['SUPABASE_DB_HOST'],
         port=os.environ['SUPABASE_DB_PORT'],
@@ -29,10 +30,13 @@ def main():
         user=os.environ['SUPABASE_DB_USER'],
         password=os.environ['SUPABASE_DB_PASSWORD'],
         sslmode='require',
+        connect_timeout=15,
     )
+    print('Connected, running migration...', flush=True)
     conn.autocommit = False
     try:
         with conn.cursor() as cur:
+            cur.execute('set statement_timeout = 15000')
             cur.execute(sql)
         conn.commit()
         print(f'Applied {sql_path} successfully.')
