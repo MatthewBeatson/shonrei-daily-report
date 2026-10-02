@@ -642,6 +642,24 @@ window via `scripts/create_production_users.py`, off again afterward.
 They'd have full admin edit rights during that window (not scoped to
 just this screen), an accepted trade-off for how rarely this comes up.
 
+## Check stock, by bin (2026-10-02)
+
+A SKU-search lookup on both the floor app (its own "Check Stock" tab)
+and admin (a "CHECK STOCK" section near the top) -- type/scan a SKU, see
+its on-hand broken down by bin, straight from live Cin7
+(`ref/productavailability`, same endpoint every other on-hand/Allocated
+figure in this app already uses -- see `Cin7Client.get_stock_by_bin`).
+Read only: no write, nothing recorded, a pure lookup for whoever's
+standing in the warehouse wanting to know where a SKU's stock actually
+sits before going to pick it. A bin Cin7 has never tagged any stock to
+shows as `"Unassigned"` (its own `Bin: null` row).
+
+Backed by `GET /cin7/stock-by-bin?sku=<sku>` (refresh-service) ->
+`GET /production/cin7-stock-by-bin/:sku` (Node proxy, floor + admin
+reachable). An unrecognised SKU comes back a clean 404 rather than an
+empty bin list, so "no stock anywhere" and "not a real SKU" never look
+the same.
+
 ## Live concept -- what actually runs today
 
 To get something real running with minimal new setup, the concept

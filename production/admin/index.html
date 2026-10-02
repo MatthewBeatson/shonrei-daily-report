@@ -63,6 +63,27 @@
       </div>
     </div>
 
+    <!-- CHECK STOCK -->
+    <div class="report-section">
+      <div class="section-header">CHECK STOCK</div>
+      <div class="section-body">
+        <p class="sub">
+          Real, live Cin7 read -- search a SKU, see its on-hand broken down
+          by bin. No writes, nothing recorded. Same lookup as the floor
+          app's own "Check Stock" tab.
+        </p>
+        <div class="admin-toolbar">
+          <input type="text" id="cs-sku-input" placeholder="SKU" style="max-width:220px;">
+          <button class="btn-primary" id="cs-lookup-btn">Check stock</button>
+        </div>
+        <table class="overrides-table" id="cs-bin-table" hidden>
+          <thead><tr><th>Bin</th><th>On hand</th></tr></thead>
+          <tbody id="cs-bin-tbody"></tbody>
+        </table>
+        <p class="sub" id="cs-total-line"></p>
+      </div>
+    </div>
+
     <!-- TARGETS -->
     <div class="report-section">
       <div class="section-header">TARGETS</div>

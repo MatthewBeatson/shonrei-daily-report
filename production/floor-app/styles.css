@@ -325,4 +325,20 @@ header h1 { font-size: 1.1rem; color: var(--navy); margin: 0; }
 .pa-result-icon.unknown { color: var(--amber); }
 .pa-result-message { text-align: center; font-size: 1.05rem; margin-top: 8px; }
 
+.sub { color: var(--gray); font-size: 0.9rem; text-align: center; }
+
+.cs-bin-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 0.95rem;
+}
+.cs-bin-table th, .cs-bin-table td {
+  padding: 10px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.cs-bin-table th { color: var(--gray); font-size: 0.8rem; font-weight: 600; }
+.cs-bin-table td:last-child, .cs-bin-table th:last-child { text-align: right; }
+
 [hidden] { display: none !important; }

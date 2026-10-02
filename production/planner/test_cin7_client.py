@@ -310,6 +310,34 @@ class GetStockOnHandTests(unittest.TestCase):
         self.assertEqual(self.client.get_stock_on_hand('V88NBUSS'), 4.0)
 
 
+class GetStockByBinTests(unittest.TestCase):
+    def setUp(self):
+        self.client = Cin7Client(account_id='x', api_key='y')
+
+    @patch('cin7_client.requests.get')
+    def test_one_row_per_bin_with_null_bin_labelled_unassigned(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        result = self.client.get_stock_by_bin('14LSWL/NB')
+        self.assertEqual(result, [
+            {'bin': 'Unassigned', 'on_hand': 10.0, 'allocated': 35.0, 'available': -25.0},
+            {'bin': 'Stockroom - Main', 'on_hand': 11.0, 'allocated': 0.0, 'available': 11.0},
+        ])
+
+    @patch('cin7_client.requests.get')
+    def test_does_not_blend_in_an_unrelated_sku_cin7_fuzzy_matched(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_UNRELATED_SKU_MATCH)
+        result = self.client.get_stock_by_bin('V88NBUSS')
+        self.assertEqual(result, [
+            {'bin': 'Unassigned', 'on_hand': 4.0, 'allocated': 24.0, 'available': -20.0},
+        ])
+
+    @patch('cin7_client.requests.get')
+    def test_unknown_sku_raises_rather_than_returning_an_empty_list(self, mock_get):
+        mock_get.return_value = _mock_response({"Total": 0, "Page": 1, "ProductAvailabilityList": []})
+        with self.assertRaises(ValueError):
+            self.client.get_stock_by_bin('NOPE')
+
+
 # -- write-side tests -- shapes from Cin7's own documented "Finished
 # Goods" / "Stock Adjustment" endpoints (production/README.md "Confirmed
 # Cin7 writes"), not yet proven against a live tenant -- see

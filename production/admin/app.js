@@ -164,6 +164,41 @@ async function downloadOpenOrders() {
   }
 }
 
+// -- Check Stock ---------------------------------------------------------
+// Real, live Cin7 read -- search a SKU, see its on-hand broken down by
+// bin. No writes, nothing recorded. Same lookup as the floor app's own
+// Check Stock tab (refresh-service/cin7_read.py's get_stock_by_bin).
+
+async function checkStockByBin() {
+  const sku = document.getElementById('cs-sku-input').value.trim();
+  const table = document.getElementById('cs-bin-table');
+  const tbody = document.getElementById('cs-bin-tbody');
+  const totalLine = document.getElementById('cs-total-line');
+  if (!sku) { setError('Enter a SKU first.'); return; }
+  setError('');
+  const btn = document.getElementById('cs-lookup-btn');
+  btn.disabled = true;
+  try {
+    const data = await api(`/production/cin7-stock-by-bin/${encodeURIComponent(sku)}`);
+    tbody.innerHTML = '';
+    let total = 0;
+    for (const row of data.bins) {
+      total += row.on_hand;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(row.bin)}</td><td>${escapeHtml(row.on_hand)}</td>`;
+      tbody.appendChild(tr);
+    }
+    table.hidden = false;
+    totalLine.textContent = `${data.sku}: total on hand ${total} (live from Cin7, just now)`;
+  } catch (err) {
+    table.hidden = true;
+    totalLine.textContent = '';
+    setError(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // -- Targets -----------------------------------------------------------
 
 async function loadTargets() {
@@ -909,6 +944,8 @@ document.getElementById('refresh-locations-btn').addEventListener('click', loadL
 document.getElementById('locations-filter').addEventListener('change', loadLocations);
 document.getElementById('refresh-putaway-btn').addEventListener('click', loadPutawayScans);
 document.getElementById('open-orders-btn').addEventListener('click', downloadOpenOrders);
+document.getElementById('cs-lookup-btn').addEventListener('click', checkStockByBin);
+document.getElementById('cs-sku-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); checkStockByBin(); } });
 document.getElementById('pull-demand-btn').addEventListener('click', pullDemandFromCin7);
 document.getElementById('sync-pulled-demand-btn').addEventListener('click', syncPulledDemand);
 for (const th of document.querySelectorAll('#pulled-demand-table th[data-sort]')) {

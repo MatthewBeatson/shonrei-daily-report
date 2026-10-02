@@ -333,6 +333,30 @@ class Cin7Client:
                 result[sku] = {"on_hand": 0.0, "allocated": 0.0, "available": 0.0}
         return result
 
+    def get_stock_by_bin(self, sku: str) -> list[dict]:
+        """One row per bin this SKU has any stock/history in -- for the
+        floor app's and admin's "check stock on hand, by bin" SKU search
+        (2026-10-02). Each row: {"bin", "on_hand", "allocated",
+        "available"} -- `bin` is the real Cin7 Bin name, or "Unassigned"
+        for the untagged bucket (Cin7's own `Bin: null` row -- see
+        _get_availability_rows's docstring; every SKU has at least this
+        one row even with no bin-tagged stock at all). Raises ValueError
+        if Cin7 has no record for this SKU at all (propagated from
+        _get_availability_rows) -- callers show that as "not found",
+        not a silent empty list, since an unrecognised SKU and a real
+        SKU with zero stock everywhere look identical otherwise.
+        """
+        rows = self._get_availability_rows(sku)
+        return [
+            {
+                "bin": row.get("Bin") or "Unassigned",
+                "on_hand": row["OnHand"],
+                "allocated": row["Allocated"],
+                "available": row["Available"],
+            }
+            for row in rows
+        ]
+
     def get_open_assemblies(self, skus: list[str]) -> dict[str, float]:
         """SKU -> total qty across assemblies not yet COMPLETED or VOIDED
         (Cin7 doesn't document a single "open" status, so this fetches

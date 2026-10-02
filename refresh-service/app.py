@@ -37,7 +37,7 @@ from warehouse import (
     WarehouseError, record_putaway_scan, set_home_location,
     get_putaway_mismatch_mode, set_putaway_mismatch_mode,
 )
-from cin7_read import get_on_hand_for_skus, get_availability_for_skus, sku_exists, get_real_cin7_client
+from cin7_read import get_on_hand_for_skus, get_availability_for_skus, get_stock_by_bin, sku_exists, get_real_cin7_client
 from labels import batch_label_zpl, location_label_zpl, sku_label_zpl
 import open_orders_xlsx
 import demand_sync
@@ -132,6 +132,28 @@ def cin7_availability():
     if not skus:
         return jsonify({'error': 'skus query param is required (comma-separated)'}), 400
     return jsonify({'availability': get_availability_for_skus(skus)}), 200
+
+
+@app.get('/cin7/stock-by-bin')
+def cin7_stock_by_bin():
+    """Real, live per-bin stock for one SKU -- READ ONLY, same "always
+    real Cin7" carve-out as /cin7/on-hand. Backs the floor app's and
+    admin's "check stock on hand, by bin" SKU search (2026-10-02).
+
+    Query param: sku=<one SKU>.
+    """
+    if not require_secret():
+        return jsonify({'error': 'unauthorized'}), 401
+    sku = (request.args.get('sku') or '').strip()
+    if not sku:
+        return jsonify({'error': 'sku query param is required'}), 400
+    try:
+        rows = get_stock_by_bin(sku)
+    except ValueError:
+        return jsonify({'error': f'{sku!r} is not a real Cin7 SKU -- check for a typo'}), 404
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({'error': f"Couldn't read Cin7 right now: {exc}"}), 502
+    return jsonify({'sku': sku, 'bins': rows}), 200
 
 
 @app.get('/cin7/sku-exists')

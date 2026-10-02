@@ -16,6 +16,7 @@
       <button class="tab-btn active" id="tabBtnBatches" data-tab="batches">Batches</button>
       <button class="tab-btn" id="tabBtnStocktake" data-tab="stocktake">Stocktake</button>
       <button class="tab-btn" id="tabBtnPutaway" data-tab="putaway">Putaway</button>
+      <button class="tab-btn" id="tabBtnCheckStock" data-tab="checkStock">Check Stock</button>
     </nav>
 
     <!-- ===================== BATCHES TAB ===================== -->
@@ -216,6 +217,38 @@
       <section class="run-card" id="paResultStep" hidden>
         <div id="paResultIcon" class="pa-result-icon"></div>
         <p id="paResultMessage" class="pa-result-message"></p>
+      </section>
+    </div>
+
+    <!-- ===================== CHECK STOCK TAB ===================== -->
+    <!-- Real, live Cin7 read -- search a SKU, see its on-hand broken
+         down by bin, same per-bin data warehouse.sku_locations/Putaway
+         already assumes exists. No writes, nothing recorded -- a pure
+         lookup. See production/README.md. -->
+    <div class="tab-panel" id="tabCheckStock" hidden>
+      <section class="scan-card" id="csSkuStep">
+        <div class="scan-input-row">
+          <label for="csSkuInput">Scan or enter a SKU</label>
+          <div class="scan-input-with-camera">
+            <input type="text" id="csSkuInput" inputmode="text" autocomplete="off"
+                   autocapitalize="characters" placeholder="e.g. FG-2400-BOX">
+            <button type="button" class="camera-scan-btn" data-target="csSkuInput" aria-label="Scan with camera">📷</button>
+          </div>
+        </div>
+        <div id="csError" class="scan-error" hidden></div>
+        <div>
+          <button id="csLookupBtn">Check stock</button>
+        </div>
+      </section>
+
+      <section class="run-card" id="csResultStep" hidden>
+        <div class="product" id="csSkuLine"></div>
+        <table class="cs-bin-table" id="csBinTable">
+          <thead><tr><th>Bin</th><th>On hand</th></tr></thead>
+          <tbody id="csBinTbody"></tbody>
+        </table>
+        <p class="sub" id="csTotalLine"></p>
+        <button id="csAgainBtn">Check another SKU</button>
       </section>
     </div>
   </div>

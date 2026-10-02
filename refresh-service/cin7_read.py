@@ -58,6 +58,16 @@ def get_availability_for_skus(skus: list[str]) -> dict[str, dict | None]:
     return result
 
 
+def get_stock_by_bin(sku: str) -> list[dict]:
+    """One row per bin, for the floor app's/admin's "check stock, by
+    bin" SKU search. A single-SKU, on-demand lookup (not a batch like
+    the others above) -- lets ValueError (SKU not found) and any other
+    failure propagate so the caller can tell those apart, same
+    reasoning as sku_exists.
+    """
+    return get_real_cin7_client().get_stock_by_bin(sku)
+
+
 def sku_exists(sku: str) -> bool:
     """Real, live check -- does this SKU exist as a Cin7 product at all.
     Used to stop the floor/admin apps accepting a scanned or typed SKU

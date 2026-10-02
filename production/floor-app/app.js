@@ -19,11 +19,13 @@ const tabPanels = {
   batches: document.getElementById('tabBatches'),
   stocktake: document.getElementById('tabStocktake'),
   putaway: document.getElementById('tabPutaway'),
+  checkStock: document.getElementById('tabCheckStock'),
 };
 const tabBtns = {
   batches: document.getElementById('tabBtnBatches'),
   stocktake: document.getElementById('tabBtnStocktake'),
   putaway: document.getElementById('tabBtnPutaway'),
+  checkStock: document.getElementById('tabBtnCheckStock'),
 };
 
 function showTab(name) {
@@ -34,10 +36,12 @@ function showTab(name) {
   if (name === 'batches') batchCodeInput.focus();
   if (name === 'stocktake') document.getElementById(currentStArea ? 'stSkuInput' : 'stAreaInput').focus();
   if (name === 'putaway') document.getElementById('paSkuInput').focus();
+  if (name === 'checkStock') document.getElementById('csSkuInput').focus();
 }
 tabBtns.batches.addEventListener('click', () => showTab('batches'));
 tabBtns.stocktake.addEventListener('click', () => showTab('stocktake'));
 tabBtns.putaway.addEventListener('click', () => showTab('putaway'));
+tabBtns.checkStock.addEventListener('click', () => showTab('checkStock'));
 
 let currentBatch = null;
 let actualQty = 0;
@@ -645,4 +649,56 @@ function resetToPaScan() {
   paSkuInput.value = '';
   document.getElementById('paSkuError').hidden = true;
   paSkuInput.focus();
+}
+
+// -- Check Stock -------------------------------------------------------
+// Real, live Cin7 read -- search a SKU, see its on-hand broken down by
+// bin. No writes, nothing recorded -- a pure lookup, same per-bin shape
+// Putaway's "belongs at" line already assumes exists in warehouse.
+// sku_locations, but this reads Cin7 itself, not our own DB.
+
+const csSkuStep = document.getElementById('csSkuStep');
+const csResultStep = document.getElementById('csResultStep');
+const csSkuInput = document.getElementById('csSkuInput');
+const csError = document.getElementById('csError');
+
+document.getElementById('csLookupBtn').addEventListener('click', () => checkStock(csSkuInput.value.trim()));
+csSkuInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); checkStock(csSkuInput.value.trim()); } });
+document.getElementById('csAgainBtn').addEventListener('click', resetToCsScan);
+
+async function checkStock(sku) {
+  csError.hidden = true;
+  if (!sku) return;
+  const btn = document.getElementById('csLookupBtn');
+  btn.disabled = true;
+  try {
+    const data = await apiFetch(`/production/cin7-stock-by-bin/${encodeURIComponent(sku)}`);
+    document.getElementById('csSkuLine').textContent = data.sku;
+    const tbody = document.getElementById('csBinTbody');
+    tbody.innerHTML = '';
+    let total = 0;
+    for (const row of data.bins) {
+      total += row.on_hand;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${escapeHtml(row.bin)}</td><td>${escapeHtml(row.on_hand)}</td>`;
+      tbody.appendChild(tr);
+    }
+    document.getElementById('csTotalLine').textContent = `Total on hand: ${total} (live from Cin7, just now)`;
+    csSkuStep.hidden = true;
+    csResultStep.hidden = false;
+  } catch (err) {
+    csError.textContent = err.message;
+    csError.hidden = false;
+    csSkuInput.select();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function resetToCsScan() {
+  csResultStep.hidden = true;
+  csSkuStep.hidden = false;
+  csError.hidden = true;
+  csSkuInput.value = '';
+  csSkuInput.focus();
 }

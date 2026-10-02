@@ -532,6 +532,14 @@ router.get('/warehouse/sku-exists/:sku', requireFloorOrProductionAuth, asyncHand
   res.json(data);
 }));
 
+// Floor + admin: real, live per-bin stock for one SKU -- "check stock
+// on hand, by bin" (2026-10-02). Read-only, can't affect anything in
+// Cin7. See refresh-service/cin7_read.py's get_stock_by_bin.
+router.get('/cin7-stock-by-bin/:sku', requireFloorOrProductionAuth, asyncHandler(async (req, res) => {
+  const data = await callRefreshService(`/cin7/stock-by-bin?sku=${encodeURIComponent(req.params.sku)}`, {}, 'GET');
+  res.json(data);
+}));
+
 // Floor + admin: does this location code exist in Warehouse Locations --
 // a local-only check (no Cin7 involved, locations are our own table),
 // same reasoning as sku-exists above but a direct Postgres read instead
