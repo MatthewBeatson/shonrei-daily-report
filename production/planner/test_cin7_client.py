@@ -337,6 +337,14 @@ class GetStockByBinTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.client.get_stock_by_bin('NOPE')
 
+    @patch('cin7_client.requests.get')
+    def test_matches_the_real_skus_casing_case_insensitively(self, mock_get):
+        # Every real SKU in this tenant is uppercase, but staff
+        # scanning/typing shouldn't have to match that exactly.
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_MULTI_BIN)
+        result = self.client.get_stock_by_bin('14lswl/nb')
+        self.assertEqual(len(result), 2)
+
 
 # -- write-side tests -- shapes from Cin7's own documented "Finished
 # Goods" / "Stock Adjustment" endpoints (production/README.md "Confirmed

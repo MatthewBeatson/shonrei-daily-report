@@ -355,7 +355,7 @@ router.post('/stocktake/counts', requireFloorSecret, asyncHandler(async (req, re
 router.get('/stocktake/counts/latest/:sku', requireFloorSecret, asyncHandler(async (req, res) => {
   const { rows } = await pool.query(
     `select sku, counted_qty, cin7_on_hand_snapshot, variance, counted_at
-     from stocktake.counts where sku = $1 order by counted_at desc limit 1`,
+     from stocktake.counts where upper(sku) = upper($1) order by counted_at desc limit 1`,
     [req.params.sku]
   );
   res.json({ count: rows[0] || null });
@@ -516,7 +516,7 @@ router.get('/warehouse/sku-locations/:sku', requireFloorOrProductionAuth, asyncH
     `select l.code as location_code, l.description as location_description
      from warehouse.sku_locations sl
      join warehouse.locations l on l.id = sl.location_id
-     where sl.sku = $1`,
+     where upper(sl.sku) = upper($1)`,
     [req.params.sku]
   );
   res.json({ sku: req.params.sku, location: rows[0] || null });

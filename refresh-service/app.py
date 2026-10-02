@@ -664,7 +664,7 @@ def label_sku(sku):
             cur.execute(
                 """select l.code from warehouse.sku_locations sl
                    join warehouse.locations l on l.id = sl.location_id
-                   where sl.sku = %s""",
+                   where upper(sl.sku) = upper(%s)""",
                 (sku,),
             )
             row = cur.fetchone()
@@ -690,7 +690,7 @@ def label_location(location_code):
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("select stock_type from warehouse.locations where code = %s", (location_code,))
+            cur.execute("select stock_type from warehouse.locations where upper(code) = upper(%s)", (location_code,))
             row = cur.fetchone()
     finally:
         conn.close()
