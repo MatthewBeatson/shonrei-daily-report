@@ -58,6 +58,32 @@ REAL_AVAILABILITY_RESPONSE_MULTI_BIN = {
     ],
 }
 
+# Captured live (2026-10-02) via scripts/probe_allocated_breakdown.py --
+# SKU=V88NBUSS came back TWO rows, but NOT two bins of the same product
+# like the fixture above: the second row is a genuinely DIFFERENT SKU
+# (WIPV88NBUSS, an unrelated WIP component whose own code happens to
+# contain "V88NBUSS" as a substring) -- proof Cin7's SKU= param does a
+# substring match, not an exact one. Before filtering rows to an exact
+# SKU match, get_availability(['V88NBUSS']) summed both rows' Allocated
+# (24.0 + 30.0 = 54.0) as if they were the same product's bins.
+REAL_AVAILABILITY_RESPONSE_UNRELATED_SKU_MATCH = {
+    "Total": 2, "Page": 1,
+    "ProductAvailabilityList": [
+        {
+            "ID": "2a63fb3a-6ffe-4826-b647-4457fca79a9b", "SKU": "V88NBUSS",
+            "Name": "Blue Suede Necklace Insert - 9271440",
+            "Location": "Shonrei warehouse", "Bin": None,
+            "OnHand": 4.0, "Allocated": 24.0, "Available": -20.0, "OnOrder": 30.0,
+        },
+        {
+            "ID": "ea8ba5c5-0389-471e-ac6f-f1625b6ea459", "SKU": "WIPV88NBUSS",
+            "Name": "V88N Insert Outer Blue Supersuede",
+            "Location": "Shonrei warehouse", "Bin": None,
+            "OnHand": 68.0, "Allocated": 30.0, "Available": 38.0, "OnOrder": 0.0,
+        },
+    ],
+}
+
 # Captured live via scripts/dump_sample_bom.py WIPMT20T (2026-09-09), with
 # IncludeBOM=true -- the actual fix confirmed for real, not just from docs.
 # Trimmed to the fields get_bom touches; BillOfMaterialsServices (labour/
@@ -229,6 +255,22 @@ class GetAvailabilityTests(unittest.TestCase):
         result = self.client.get_availability(['14LSWL/NB'])
         self.assertEqual(result, {'14LSWL/NB': -25.0 + 11.0})
 
+    @patch('cin7_client.requests.get')
+    def test_does_not_blend_in_an_unrelated_sku_cin7_fuzzy_matched(self, mock_get):
+        # Confirmed live, 2026-10-02 (V88NBUSS): Cin7's SKU= param isn't
+        # an exact filter -- it can return a completely different
+        # product (here WIPV88NBUSS) alongside the real one. Only the
+        # real SKU's own row(s) should ever be summed.
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_UNRELATED_SKU_MATCH)
+        result = self.client.get_availability(['V88NBUSS'])
+        self.assertEqual(result, {'V88NBUSS': -20.0})
+
+    @patch('cin7_client.requests.get')
+    def test_availability_detail_does_not_blend_in_an_unrelated_sku(self, mock_get):
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_UNRELATED_SKU_MATCH)
+        result = self.client.get_availability_detail(['V88NBUSS'])
+        self.assertEqual(result, {'V88NBUSS': {'on_hand': 4.0, 'allocated': 24.0, 'available': -20.0}})
+
 
 class GetStockOnHandTests(unittest.TestCase):
     def setUp(self):
@@ -259,6 +301,13 @@ class GetStockOnHandTests(unittest.TestCase):
         self.assertEqual(
             self.client.get_stock_on_hand('14LSWL/NB', bin_name='Alleyways/Finishing Area'), 0.0,
         )
+
+    @patch('cin7_client.requests.get')
+    def test_does_not_blend_in_an_unrelated_sku_cin7_fuzzy_matched(self, mock_get):
+        # Same bug, different caller -- stocktake's variance snapshot
+        # would have been wrong too (4.0 + 68.0, not just 4.0).
+        mock_get.return_value = _mock_response(REAL_AVAILABILITY_RESPONSE_UNRELATED_SKU_MATCH)
+        self.assertEqual(self.client.get_stock_on_hand('V88NBUSS'), 4.0)
 
 
 # -- write-side tests -- shapes from Cin7's own documented "Finished

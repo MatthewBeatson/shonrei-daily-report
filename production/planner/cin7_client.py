@@ -189,13 +189,29 @@ class Cin7Client:
         No separate per-bin endpoint exists/was found (several guessed
         paths -- ref/stocklevel, ref/productstocklevel, ref/stockbybin,
         ref/bin -- all came back Cin7's fake-200 HTML, i.e. don't exist).
+
+        CRITICAL, confirmed live 2026-10-02 (V88NBUSS): `SKU=` is NOT an
+        exact filter -- it did a substring match and returned a SECOND,
+        completely unrelated product (WIPV88NBUSS, a WIP component whose
+        own code happens to contain "V88NBUSS") alongside the real one,
+        each a FULL row with its own OnHand/Allocated/Available. Every
+        caller here sums across every row this method returns (summing
+        across bins is correct; summing across unrelated SKUs is not) --
+        without this filter, get_stock_on_hand/get_availability/
+        get_availability_detail silently blend in another product's
+        figures whenever Cin7's fuzzy match happens to catch one (e.g.
+        this SKU's Allocated came back 54 -- the real 24 plus
+        WIPV88NBUSS's unrelated 30 -- before this fix). Filtering to an
+        EXACT SKU match (case-sensitive, matching Cin7's own casing) is
+        what every bin-row for the real SKU still shares, so this still
+        returns every bin's row for the one real product, nothing lost.
         """
         resp = requests.get(
             f"{CIN7_BASE_URL}/ref/productavailability",
             headers=self._headers(), params={"SKU": sku}, timeout=60,
         )
         self._raise_for_status_with_body(resp)
-        rows = resp.json().get("ProductAvailabilityList") or []
+        rows = [r for r in (resp.json().get("ProductAvailabilityList") or []) if r.get("SKU") == sku]
         if not rows:
             raise ValueError(f"No Cin7 availability row found for SKU {sku!r}")
         return rows

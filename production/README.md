@@ -806,6 +806,18 @@ mocked `requests`, no live Cin7 needed to run them):
   on-hand netting) uses `Available`; `get_stock_on_hand` (stocktake's
   variance) uses the raw `OnHand` -- deliberately different fields for
   different purposes, see each method's docstring.
+  **`SKU=` is NOT an exact filter** -- confirmed live 2026-10-02
+  (V88NBUSS): it did a substring match and returned a second, completely
+  unrelated product (`WIPV88NBUSS`, a WIP component whose own code
+  happens to contain "V88NBUSS") alongside the real one, each a full row
+  with its own `OnHand`/`Allocated`/`Available`. `_get_availability_rows`
+  now filters to an exact `SKU` match before summing -- without it,
+  every caller (on-hand, stocktake variance, BOM-explosion on-hand
+  netting, the admin page's Cin7 Allocated/on-hand columns) silently
+  blended in whatever other product Cin7's fuzzy match happened to
+  catch (the admin page showed Allocated=54 for V88NBUSS -- the real 24
+  plus WIPV88NBUSS's unrelated 30 -- before this fix). See
+  `test_cin7_client.py`'s `test_does_not_blend_in_an_unrelated_sku_cin7_fuzzy_matched`.
 - **Ruled out**: `/bom`, `/product/availability`, `/productavailability`,
   `ref/bom`, `ref/productbom`, `ref/billofmaterial(s)`, `product/bom` --
   all 404 -- except Cin7 doesn't send a real 404 status, it serves its
