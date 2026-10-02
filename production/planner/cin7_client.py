@@ -164,12 +164,22 @@ class Cin7Client:
         # BillOfMaterialsProducts comes back an empty array even for a
         # real assembly with real components configured -- that's what
         # was misread as "this SKU has no BOM lines" before this was found.
+        #
+        # SKU matching is case-insensitive here (sku.strip() normalized
+        # against each candidate's own SKU, uppercased on both sides) --
+        # and, same reasoning as _get_availability_rows below, filtered
+        # to an EXACT match rather than trusting `products[0]`: Cin7's
+        # SKU= param does a substring match, not an exact one (confirmed
+        # live 2026-10-02 on the sibling ref/productavailability
+        # endpoint -- see that method's docstring), so a product list
+        # with more than one row could silently pick the wrong one.
+        sku_norm = sku.strip().upper()
         params = {"SKU": sku}
         if include_bom:
             params["IncludeBOM"] = "true"
         resp = requests.get(f"{CIN7_BASE_URL}/product", headers=self._headers(), params=params, timeout=60)
         self._raise_for_status_with_body(resp)
-        products = resp.json().get("Products") or []
+        products = [p for p in (resp.json().get("Products") or []) if (p.get("SKU") or "").strip().upper() == sku_norm]
         if not products:
             raise ValueError(f"No Cin7 product found for SKU {sku!r}")
         return products[0]
@@ -202,16 +212,24 @@ class Cin7Client:
         figures whenever Cin7's fuzzy match happens to catch one (e.g.
         this SKU's Allocated came back 54 -- the real 24 plus
         WIPV88NBUSS's unrelated 30 -- before this fix). Filtering to an
-        EXACT SKU match (case-sensitive, matching Cin7's own casing) is
-        what every bin-row for the real SKU still shares, so this still
-        returns every bin's row for the one real product, nothing lost.
+        EXACT SKU match is what every bin-row for the real SKU still
+        shares, so this still returns every bin's row for the one real
+        product, nothing lost. Matched case-INsensitively (uppercased
+        on both sides) -- every real SKU in this tenant is uppercase,
+        but staff scanning/typing shouldn't have to match that exactly
+        (2026-10-02: "make all search bars where barcodes appear
+        non-case-sensitive").
         """
+        sku_norm = sku.strip().upper()
         resp = requests.get(
             f"{CIN7_BASE_URL}/ref/productavailability",
             headers=self._headers(), params={"SKU": sku}, timeout=60,
         )
         self._raise_for_status_with_body(resp)
-        rows = [r for r in (resp.json().get("ProductAvailabilityList") or []) if r.get("SKU") == sku]
+        rows = [
+            r for r in (resp.json().get("ProductAvailabilityList") or [])
+            if (r.get("SKU") or "").strip().upper() == sku_norm
+        ]
         if not rows:
             raise ValueError(f"No Cin7 availability row found for SKU {sku!r}")
         return rows

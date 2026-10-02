@@ -109,6 +109,16 @@ def record_count(
     if counted_qty < 0:
         raise StocktakeError('counted_qty must be >= 0')
 
+    # Normalized once here, not just compared case-insensitively below --
+    # sync_stocktake_totals later JOINs this stored `location` against
+    # warehouse.locations.code by exact string; storing both consistently
+    # uppercase (locations.code itself normalized the same way, see
+    # migration 020) keeps that join working regardless of how the
+    # scan/typed input was cased, 2026-10-02.
+    sku = sku.strip().upper()
+    if location is not None:
+        location = location.strip().upper()
+
     try:
         sku_is_real = sku_exists(sku)
     except Exception as exc:  # noqa: BLE001
@@ -209,7 +219,7 @@ def sync_stocktake_totals(conn, cin7) -> list[dict]:
         cur.execute(
             """select c.id, c.sku, c.counted_qty, l.cin7_bin
                from stocktake.counts c
-               left join warehouse.locations l on l.code = c.location
+               left join warehouse.locations l on upper(l.code) = upper(c.location)
                where c.status = 'recorded'"""
         )
         rows = cur.fetchall()

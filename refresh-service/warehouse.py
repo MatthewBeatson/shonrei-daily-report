@@ -57,13 +57,19 @@ def set_putaway_mismatch_mode(conn, mode: str, updated_by: str | None = None) ->
 
 
 def record_putaway_scan(conn, sku: str, scanned_location_code: str, scanned_by: str | None = None) -> dict:
+    # Normalized once here (not just in each WHERE clause below) so the
+    # value actually recorded in putaway_scans/sku_locations stays
+    # consistently uppercase too -- same "non-case-sensitive barcode
+    # search" requirement as everywhere else, 2026-10-02.
+    sku = sku.strip().upper()
+    scanned_location_code = scanned_location_code.strip().upper()
     _require_real_sku(sku)
 
     with conn.cursor() as cur:
         cur.execute(
             """select l.id, l.code, l.bay_code from warehouse.sku_locations sl
                join warehouse.locations l on l.id = sl.location_id
-               where sl.sku = %s""",
+               where upper(sl.sku) = %s""",
             (sku,),
         )
         row = cur.fetchone()
@@ -144,7 +150,7 @@ def sku_stock_type(conn, sku: str) -> str | None:
         cur.execute(
             """select l.stock_type from warehouse.sku_locations sl
                join warehouse.locations l on l.id = sl.location_id
-               where sl.sku = %s""",
+               where upper(sl.sku) = upper(%s)""",
             (sku,),
         )
         row = cur.fetchone()
@@ -160,10 +166,12 @@ def set_home_location(conn, sku: str, location_code: str, cin7=None) -> dict:
     assignment, same "logging always wins" philosophy as
     record_count's Cin7 snapshot lookup.
     """
+    sku = sku.strip().upper()
+    location_code = location_code.strip().upper()
     _require_real_sku(sku)
 
     with conn.cursor() as cur:
-        cur.execute("select id, cin7_bin from warehouse.locations where code = %s", (location_code,))
+        cur.execute("select id, cin7_bin from warehouse.locations where upper(code) = %s", (location_code,))
         row = cur.fetchone()
         if row is None:
             raise WarehouseError(f'No such location code: {location_code}')

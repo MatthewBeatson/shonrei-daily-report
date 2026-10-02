@@ -46,9 +46,13 @@ def extract_demand_lines(sale_detail: dict) -> list[dict]:
 
 
 def fetch_existing_targets(conn) -> dict[str, ExistingTarget]:
+    # Keyed uppercase -- production.targets.sku should already be stored
+    # that way (every write path normalizes it), but matching uppercase
+    # here too means a leftover mixed-case row (or a future regression)
+    # still gets found rather than silently treated as a different SKU.
     with conn.cursor() as cur:
         cur.execute("select id, sku, outstanding_qty from production.targets where status = 'active'")
-        return {sku: ExistingTarget(id=str(tid), outstanding_qty=float(qty)) for tid, sku, qty in cur.fetchall()}
+        return {sku.upper(): ExistingTarget(id=str(tid), outstanding_qty=float(qty)) for tid, sku, qty in cur.fetchall()}
 
 
 def sync_targets(conn, cin7, demand_lines_by_sku: dict[str, list[dict]]) -> list[dict]:
@@ -61,7 +65,21 @@ def sync_targets(conn, cin7, demand_lines_by_sku: dict[str, list[dict]]) -> list
     replaces that target's `target_demand_lines` with the fresh
     priority-ordered list. Returns one summary dict per action taken
     (kind != 'noop').
+
+    SKU keys are normalized to uppercase before anything else here --
+    the automatic Cin7 pull (demand_sync.py) always already matches
+    Cin7's own casing, but admin's manual-entry table is free text, and
+    a case mismatch against an existing target's own (uppercase) SKU
+    would otherwise create a duplicate target instead of adjusting the
+    real one (2026-10-02). Two differently-cased keys for the same real
+    SKU (shouldn't happen, but cheap to handle) have their demand lines
+    combined rather than one silently overwriting the other.
     """
+    normalized: dict[str, list[dict]] = {}
+    for sku, lines in demand_lines_by_sku.items():
+        normalized.setdefault(sku.strip().upper(), []).extend(lines)
+    demand_lines_by_sku = normalized
+
     existing = fetch_existing_targets(conn)
     demand_totals = {sku: sum(l['qty_backordered'] for l in lines) for sku, lines in demand_lines_by_sku.items()}
     actions = plan_target_actions(demand_totals, existing)
